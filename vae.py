@@ -1,0 +1,87 @@
+"""
+M1 code replication from the paper
+'Semi-Supervised Learning with Deep Generative Models'
+(Kingma 2014) in PyTorch.
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
+
+def reparametrize(mu, log_var):
+    epsilon = Variable(torch.randn(*mu.size()))
+    std = torch.exp(0.5 * log_var)
+
+    z = mu + std * epsilon
+
+    return z
+
+class Encoder(nn.Module):
+    def __init__(self, dims):
+        super(Encoder, self).__init__()
+        [x_dim, h_dim, z_dim] = dims
+        self.dense1 = nn.Linear(x_dim, h_dim)
+        self.dense2 = nn.Linear(h_dim, 2*z_dim)
+
+    def forward(self, x):
+        x = F.relu(self.dense1(x))
+        x = self.dense2(x)
+        return x
+
+
+class Decoder(nn.Module):
+    def __init__(self, dims):
+        super(Decoder, self).__init__()
+        [z_dim, h_dim, x_dim] = dims
+        self.dense1 = nn.Linear(z_dim, h_dim)
+        self.dense2 = nn.Linear(h_dim, x_dim)
+
+    def forward(self, x):
+        x = F.relu(self.dense1(x))
+        x = F.sigmoid(self.dense2(x))
+        return x
+
+
+class VariationalAutoencoder(nn.Module):
+    def __init__(self, dims):
+        super(VariationalAutoencoder, self).__init__()
+        [x_dim, z_dim, h_dim] = dims
+        self.encoder = Encoder([x_dim, h_dim, z_dim])
+        self.decoder = Decoder([z_dim, h_dim, x_dim])
+
+    def forward(self, x):
+        x = self.encoder(x)
+        mu, log_var = torch.chunk(x, 2, dim=1)
+        z = reparametrize(mu, log_var)
+        x_hat = self.decoder(z)
+
+        return x_hat, (mu, log_var)
+
+
+def print_inject(epoch, losses):
+    [reconstruction_loss, kl_divergence] = losses
+    print("Epoch {0:}, loss: {1:.2f}, KL: {2:.2f}".format(epoch,
+                                                          reconstruction_loss,
+                                                          kl_divergence))
+
+
+def train_vae(model, dataloader, optimizer, epochs=100, injection=print_inject):
+    for epoch in range(epochs):
+        for input, _ in dataloader:
+            input = input.view(dataloader.batch_size, -1)
+            input = Variable(input)
+
+            optimizer.zero_grad()
+
+            reconstruction, (mu, log_var) = model(input)
+
+            loss = F.binary_cross_entropy(reconstruction, input, size_average=False)
+            kl_divergence = 0.5 * torch.sum(mu ** 2 + torch.exp(log_var) - log_var - 1.)
+
+            total_loss = loss + kl_divergence
+
+            total_loss.backward()
+            optimizer.step()
+
+        injection(epoch, [loss, kl_divergence])
