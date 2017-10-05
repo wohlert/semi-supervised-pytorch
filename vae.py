@@ -44,6 +44,12 @@ class Decoder(nn.Module):
 
 
 class VariationalAutoencoder(nn.Module):
+    """
+    Variational Autoencoder model consisting
+    of an encoder/decoder pair for which a
+    variational distribution is fitted to the
+    encoder.
+    """
     def __init__(self, dims):
         super(VariationalAutoencoder, self).__init__()
         [x_dim, z_dim, h_dim] = dims
@@ -58,15 +64,24 @@ class VariationalAutoencoder(nn.Module):
 
         return x_hat, (mu, log_var)
 
+    def generate(self, z):
+        """
+        Samples from the Decoder to generate an x.
+        :param z: Latent normal variable
+        :param y: label
+        :return: x
+        """
+        return self.decoder(z)
 
-def print_inject(epoch, losses):
-    [reconstruction_loss, kl_divergence] = losses
-    print("Epoch {0:}, loss: {1:.2f}, KL: {2:.2f}".format(epoch,
-                                                          reconstruction_loss,
-                                                          kl_divergence))
 
-
-def train_vae(model, dataloader, optimizer, epochs=100, injection=print_inject):
+def train_vae(model, dataloader, optimizer, epochs=100):
+    """
+    Trains a Variational Autoencoder model.
+    :param model: object of class `VariationalAutoencoder`
+    :param dataloader: loader to sample data from
+    :param optimizer: PyTorch compatible optimizer
+    :param epochs: number of epochs to run optimization over
+    """
     for epoch in range(epochs):
         for input, _ in dataloader:
             input = input.view(dataloader.batch_size, -1)
@@ -84,4 +99,4 @@ def train_vae(model, dataloader, optimizer, epochs=100, injection=print_inject):
             total_loss.backward()
             optimizer.step()
 
-        injection(epoch, [loss, kl_divergence])
+        print("Epoch {0:}, loss: {1:.2f}, KL: {2:.2f}".format(epoch, loss, kl_divergence))

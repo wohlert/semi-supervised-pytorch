@@ -44,7 +44,7 @@ class Encoder(nn.Module):
         x = self.dense_x(x)
         y = self.dense_y(y)
         z = self.dense(torch.add(x, y))
-        return z
+        return F.relu(z)
 
 
 class Decoder(nn.Module):
@@ -70,7 +70,7 @@ class Decoder(nn.Module):
 class DeepGenerativeModel(nn.Module):
     """
     Deep generative model consisting of an
-    Encoder/Decoder pair along with a classifier
+    encoder/decoder pair along with a classifier
     in order to perform semi-supervised learning.
     """
     def __init__(self, ratio, dims):
@@ -110,7 +110,6 @@ class DeepGenerativeModel(nn.Module):
         :param y: label
         :return: x
         """
-        # Generate data from a given sample and label
         y = y.type(torch.FloatTensor)
         return self.decoder(z, y)
 
@@ -148,20 +147,18 @@ class LabelledLoss(nn.Module):
         """
         [batch_size, *_] = y.size()
 
-        # Gaussian prior over z
-        log_prior_z = torch.sum(-0.5 * (z**2 + np.log(2. * np.pi)))
-
         # Uniform prior over y
         prior_y = (1. / self.n_labels) * torch.ones(batch_size, self.n_labels)
-        log_prior_y = torch.log(F.cross_entropy(prior_y, y, size_average=False))
+        prior_y = F.softmax(prior_y)
+        log_prior_y = -F.cross_entropy(prior_y, y, size_average=False)
 
         # Binary cross entropy as log likelihood of r
-        log_likelihood = torch.log(F.binary_cross_entropy(r, x, size_average=False))
+        log_likelihood = -F.binary_cross_entropy(r, x, size_average=False)
 
         # Gaussian variational distribution over z
-        log_post_z = torch.sum(-0.5 * (z_log_var + 1. + np.log(2. * np.pi)))
+        log_post_z = -0.5 * torch.sum(z_log_var - z_mu**2 - torch.exp(z_log_var) + 1)
 
-        return log_likelihood + log_prior_y + log_prior_z - log_post_z
+        return torch.mean(log_likelihood + log_prior_y - log_post_z)
 
 
 def generate_label(batch_size, label):
@@ -195,6 +192,9 @@ def train_dgm(model, dataloader, labelled, optimizer, objective, labels=[0], epo
     for epoch in range(epochs):
         [x, y] = labelled
 
+        # Bernoulli transform for binary cross entropy
+        x = torch.bernoulli(x)
+
         x = Variable(x.view(n_labelled, -1), requires_grad=True)
         y = Variable(y.view(n_labelled, 1), requires_grad=False)
 
@@ -205,13 +205,13 @@ def train_dgm(model, dataloader, labelled, optimizer, objective, labels=[0], epo
 
         # Batchwise loss
         y = y.view(-1)
-        L = torch.stack([objective(*data) for data in zip(reconstruction, x, y, z, z_mu, z_log_var)], dim=1)
-        L = torch.sum(L)
+        L = objective(reconstruction, x, y, z, z_mu, z_log_var)
 
         # Unlabelled data
         U = Variable(torch.FloatTensor([0]))
 
         for u, l in dataloader:
+            u = torch.bernoulli(u)
             u, _ = separate(u, l, labels)
             [batch_size, *_] = u.size()
             u = Variable(u.view(batch_size, -1), requires_grad=True)
@@ -229,14 +229,10 @@ def train_dgm(model, dataloader, labelled, optimizer, objective, labels=[0], epo
                 loss_tensor[:, i] = loss.view(-1)
 
             # Weighted loss + entropy
-            U += torch.sum(torch.mul(u_logits, loss_tensor - torch.log(u_logits)))
+            U += torch.mean(torch.mul(u_logits, loss_tensor - torch.log(u_logits)))
 
-        # Normalise losses by dataset size
-        L = L/n_labelled
-        U = U/n_unlabelled
-
-        J = (L + U)
-        J -= model.beta * F.cross_entropy(y_logits, y)
+        L -= model.beta * F.cross_entropy(y_logits, y)
+        J = -(L + U)
 
         J.backward()
         optimizer.step()
