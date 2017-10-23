@@ -7,7 +7,6 @@ M2 code replication from the paper
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from torch.autograd import Variable
 from vae import reparametrize
 
@@ -19,13 +18,14 @@ class Classifier(nn.Module):
     """
     def __init__(self, dims):
         super(Classifier, self).__init__()
-        x, h, y = dims
-        self.dense1 = nn.Linear(x, h)
-        self.dense2 = nn.Linear(h, y)
+        [x_dim, h_dim, y_dim] = dims
+        self.dense = nn.Linear(x_dim, h_dim)
+        self.prediction = nn.Linear(h_dim, y_dim)
 
     def forward(self, x):
-        x = F.relu(self.dense1(x))
-        return F.softmax(self.dense2(x))
+        x = F.relu(self.dense(x))
+        x = F.softmax(self.prediction(x))
+        return x
 
 
 class Encoder(nn.Module):
@@ -35,16 +35,18 @@ class Encoder(nn.Module):
     """
     def __init__(self, dims):
         super(Encoder, self).__init__()
-        [x_dim, h_dim, z_dim] = dims
-        self.dense_x = nn.Linear(x_dim, h_dim)
-        self.dense_y = nn.Linear(1, h_dim)
-        self.dense   = nn.Linear(h_dim, 2*z_dim)
+        [x_dim, y_dim, h_dim, z_dim] = dims
+        self.transform_x = nn.Linear(x_dim, h_dim)
+        self.transform_y = nn.Linear(y_dim, h_dim)
+        self.latent = nn.Linear(h_dim, h_dim)
+        self.mu = nn.Linear(h_dim, z_dim)
+        self.log_var = nn.Linear(h_dim, z_dim)
 
     def forward(self, x, y):
-        x = self.dense_x(x)
-        y = self.dense_y(y)
-        z = self.dense(torch.add(x, y))
-        return F.relu(z)
+        x = self.transform_x(x)
+        y = self.transform_y(y)
+        z = F.relu(self.latent(x + y))
+        return self.mu(z), F.softplus(self.log_var(z))
 
 
 class Decoder(nn.Module):
@@ -55,15 +57,15 @@ class Decoder(nn.Module):
     """
     def __init__(self, dims):
         super(Decoder, self).__init__()
-        [z_dim, h_dim, x_dim] = dims
-        self.dense_y = nn.Linear(1, z_dim)
-        self.dense1  = nn.Linear(z_dim, h_dim)
-        self.dense2  = nn.Linear(h_dim, x_dim)
+        [z_dim, h_dim, y_dim, x_dim] = dims
+        self.transform = nn.Linear(y_dim, z_dim)
+        self.dense = nn.Linear(z_dim, h_dim)
+        self.reconstruction = nn.Linear(h_dim, x_dim)
 
     def forward(self, z, y):
-        y = self.dense_y(y)
-        x = F.relu(self.dense1(torch.add(z, y)))
-        x = F.sigmoid(self.dense2(x))
+        y = self.transform(y)
+        x = F.relu(self.dense(z + y))
+        x = F.sigmoid(self.reconstruction(x))
         return x
 
 
@@ -85,8 +87,8 @@ class DeepGenerativeModel(nn.Module):
 
         [self.x_dim, self.y_dim, self.z_dim, self.h_dim] = dims
 
-        self.encoder = Encoder([self.x_dim, self.h_dim, self.z_dim])
-        self.decoder = Decoder([self.z_dim, self.h_dim, self.x_dim])
+        self.encoder = Encoder([self.x_dim, self.y_dim, self.h_dim, self.z_dim])
+        self.decoder = Decoder([self.z_dim, self.h_dim, self.y_dim, self.x_dim])
         self.classifier = Classifier([self.x_dim, self.h_dim, self.y_dim])
 
     def forward(self, x, y):
@@ -94,8 +96,7 @@ class DeepGenerativeModel(nn.Module):
         y_logits = self.classifier(x)
 
         # Add label and data and generate latent variable
-        latent = self.encoder(x, y)
-        z_mu, z_log_var = torch.chunk(latent, 2, dim=1)
+        z_mu, z_log_var = self.encoder(x, y)
         z = reparametrize(z_mu, z_log_var)
 
         # Reconstruct data point from latent data and label
@@ -112,17 +113,6 @@ class DeepGenerativeModel(nn.Module):
         """
         y = y.type(torch.FloatTensor)
         return self.decoder(z, y)
-
-
-def separate(x, y, labels=(0,)):
-    x, y = x.numpy(), y.numpy()
-    x = np.vstack([x[y == i] for i in labels])
-    y = np.hstack([y[y == i] for i in labels])
-
-    x = torch.from_numpy(x)
-    y = torch.from_numpy(y)
-
-    return x, y
 
 
 class LabelledLoss(nn.Module):
@@ -150,91 +140,94 @@ class LabelledLoss(nn.Module):
         # Uniform prior over y
         prior_y = (1. / self.n_labels) * torch.ones(batch_size, self.n_labels)
         prior_y = F.softmax(prior_y)
-        log_prior_y = -F.cross_entropy(prior_y, y, size_average=False)
+
+        log_prior_y = torch.sum(y * torch.log(prior_y), dim=1)
 
         # Binary cross entropy as log likelihood of r
-        log_likelihood = -F.binary_cross_entropy(r, x, size_average=False)
+        log_likelihood = torch.sum((x * torch.log(r) + (1 - x) * torch.log(1 - r)), dim=-1)
 
         # Gaussian variational distribution over z
-        log_post_z = -0.5 * torch.sum(z_log_var - z_mu**2 - torch.exp(z_log_var) + 1)
+        kl_divergence = torch.sum(-0.5 * (z_log_var - z_mu**2 - torch.exp(z_log_var) + 1), dim=-1)
 
-        return torch.mean(log_likelihood + log_prior_y - log_post_z)
+        return log_likelihood + log_prior_y - kl_divergence
 
 
-def generate_label(batch_size, label):
+def generate_label(batch_size, label, nlabels=2):
     """
-    Generates a `torch.Tensor` of size batch_size x 1 of
+    Generates a `torch.Tensor` of size batch_size x n_labels of
     the given label.
 
-    Example: generate_label(5, 1) #=> torch.Tensor([[1, 1, 1, 1, 1]])
+    Example: generate_label(2, 1, 3) #=> torch.Tensor([[0, 1, 0],
+                                                       [0, 1, 0]])
     :param batch_size: number of labels
     :param label: label to generate
+    :param nlabels: number of total labels
     """
-    return (torch.ones(batch_size, 1) * label).type(torch.LongTensor)
+    labels = (torch.ones(batch_size, 1) * label).type(torch.LongTensor)
+    y = torch.zeros((batch_size, nlabels))
+    y.scatter_(1, labels, 1)
+    return y
 
 
-def train_dgm(model, dataloader, labelled, optimizer, objective, labels=[0], epochs=100):
+def train_dgm(model, unlabelled, labelled, optimizer, objective, cuda=False):
     """
     Trains a deep generative model end to end.
     :param model: Object of class `DeepGenerativeModel`
-    :param dataloader: Dataloader for unlabelled data
+    :param unlabelled: Dataloader for unlabelled data
     :param labelled: [x, y] pairs of labelled data
     :param optimizer: A PyTorch optimizer
     :param objective: Loss function for labelled data, e.g. `LabelledLoss`
-    :param labels: Labels in the dataset, e.g. `[0, 1, 2]`
-    :param epochs: Number of epochs to run the training loop for
+    :param cuda: Optional parameter whether to use CUDA accelation
     """
-    [x, _] = labelled
+    [x, y] = labelled
+    _, n = y.size()
 
-    [n_labelled, *_] = x.size()
-    n_unlabelled = len(dataloader.dataset)
+    x = Variable(x)
+    y = Variable(y.type(torch.FloatTensor))
 
-    for epoch in range(epochs):
-        [x, y] = labelled
+    if cuda:
+        x = x.cuda()
+        y = y.cuda()
 
-        # Bernoulli transform for binary cross entropy
-        x = torch.bernoulli(x)
+    for u, _ in unlabelled:
+        if cuda: u = u.cuda()
+        u = Variable(u)
 
-        x = Variable(x.view(n_labelled, -1), requires_grad=True)
-        y = Variable(y.view(n_labelled, 1), requires_grad=False)
+        ### Labelled data ###
 
-        optimizer.zero_grad()
+        # Calculate loss for labelled
+        reconstruction, y_logits, (z, z_mu, z_log_var) = model(x, y)
+        L = objective(reconstruction, x, y, z, z_mu, z_log_var) + model.beta * torch.sum(y * torch.log(y_logits), dim=1)
+        L = torch.mean(L)
 
-        # Labelled data
-        reconstruction, y_logits, (z, z_mu, z_log_var) = model(x, y.type(torch.FloatTensor))
+        ### Unlabelled data ###
+        u_logits = model.classifier(u)
 
-        # Batchwise loss
-        y = y.view(-1)
-        L = objective(reconstruction, x, y, z, z_mu, z_log_var)
+        # Sum over all labels in the dataset
+        [batch_size, *_] = u.size()
+        u = u.repeat(n, 1)
 
-        # Unlabelled data
-        U = Variable(torch.FloatTensor([0]))
+        targets = torch.cat([generate_label(batch_size, i, n) for i in range(n)])
+        targets = Variable(targets.type(torch.FloatTensor))
 
-        for u, l in dataloader:
-            u = torch.bernoulli(u)
-            u, _ = separate(u, l, labels)
-            [batch_size, *_] = u.size()
-            u = Variable(u.view(batch_size, -1), requires_grad=True)
+        if cuda:
+            u = u.cuda()
+            targets = targets.cuda()
 
-            u_logits = model.classifier(u)
+        reconstruction, _, (z, z_mu, z_log_var) = model(u, targets)
+        loss = objective(reconstruction, u, targets, z, z_mu, z_log_var)
+        loss = loss.view(u_logits.size())
 
-            # Gather unlabelled loss in a single tensor per batch
-            loss_tensor = Variable(torch.zeros(batch_size, len(labels)))
-            for i, label in enumerate(labels):
-                label = Variable(generate_label(batch_size, label))
-                reconstruction, _, (z, z_mu, z_log_var) = model(u, label.type(torch.FloatTensor))
+        # Weighted loss + entropy
+        U = torch.sum(torch.mul(u_logits, loss - torch.log(u_logits)), -1)
+        U = torch.mean(U)
 
-                label = label.view(-1)
-                loss = torch.stack([objective(*data) for data in zip(reconstruction, u, label, z, z_mu, z_log_var)], dim=1)
-                loss_tensor[:, i] = loss.view(-1)
+        U = -U
+        L = -L
+        J = (L + U)
 
-            # Weighted loss + entropy
-            U += torch.mean(torch.mul(u_logits, loss_tensor - torch.log(u_logits)))
+    J.backward()
+    optimizer.step()
+    optimizer.zero_grad()
 
-        L -= model.beta * F.cross_entropy(y_logits, y)
-        J = -(L + U)
-
-        J.backward()
-        optimizer.step()
-
-        print("Epoch: {}\t labelled loss: {}, unlabelled loss: {}".format(epoch, float(L.data.numpy()), float(U.data.numpy())))
+    return L, U
