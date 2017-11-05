@@ -24,19 +24,22 @@ class Encoder(nn.Module):
 
     :param dims (list (int)): Dimensions of the networks
         given by the number of neurons on the form
-        [input_dim, hidden_dim, latent_dim].
+        [input_dim, [hidden_dims], latent_dim].
     """
     def __init__(self, dims):
         super(Encoder, self).__init__()
         [x_dim, h_dim, z_dim] = dims
-        self.dense = nn.Linear(x_dim, h_dim)
-        self.latent = nn.Linear(h_dim, h_dim)
-        self.mu = nn.Linear(h_dim, z_dim)
-        self.log_var = nn.Linear(h_dim, z_dim)
+        neurons = [x_dim, *h_dim]
+        linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
+        self.hidden = nn.ModuleList(linear_layers)
+        self.mu = nn.Linear(h_dim[-1], z_dim)
+        self.log_var = nn.Linear(h_dim[-1], z_dim)
 
     def forward(self, x):
-        x = F.relu(self.dense(x))
-        x = self.latent(x)
+        for i, layer in enumerate(self.hidden):
+            x = layer(x)
+            if i < len(self.hidden) - 1:
+                x = F.relu(x)
         return self.mu(x), self.log_var(x)
 
 
@@ -50,18 +53,21 @@ class Decoder(nn.Module):
 
     :param dims (list (int)): Dimensions of the networks
         given by the number of neurons on the form
-        [latent_dim, hidden_dim, input_dim].
+        [latent_dim, [hidden_dims], input_dim].
     """
     def __init__(self, dims):
         super(Decoder, self).__init__()
         [z_dim, h_dim, x_dim] = dims
-        self.dense1 = nn.Linear(z_dim, h_dim)
-        self.dense2 = nn.Linear(h_dim, x_dim)
+        neurons = [z_dim, *h_dim]
+        linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
+        self.hidden = nn.ModuleList(linear_layers)
+        self.reconstruction = nn.Linear(h_dim[-1], x_dim)
         self.output_activation = nn.Sigmoid()
 
     def forward(self, x):
-        x = F.relu(self.dense1(x))
-        x = self.output_activation(self.dense2(x))
+        for i, layer in enumerate(self.hidden):
+            x = F.relu(layer(x))
+        x = self.output_activation(self.reconstruction(x))
         return x
 
 
@@ -74,7 +80,7 @@ class VariationalAutoencoder(nn.Module):
 
     :param dims (list (int)): Dimensions of the networks
         given by the number of neurons on the form
-        [input_dim, hidden_dim, latent_dim].
+        [input_dim, [hidden_dims], latent_dim].
     :return: (x_hat, latent) where latent is represented
         by parameters of the z-distribution along with a
         sample.
@@ -83,7 +89,7 @@ class VariationalAutoencoder(nn.Module):
         super(VariationalAutoencoder, self).__init__()
         [x_dim, z_dim, h_dim] = dims
         self.encoder = Encoder([x_dim, h_dim, z_dim])
-        self.decoder = Decoder([z_dim, h_dim, x_dim])
+        self.decoder = Decoder([z_dim, list(reversed(h_dim)), x_dim])
 
     def forward(self, x):
         mu, log_var = self.encoder(x)

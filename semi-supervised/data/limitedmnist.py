@@ -21,7 +21,7 @@ class LimitedMNIST(data.Dataset):
         digits (list, optional): List of digits to limit the dataset to.
     """
 
-    def __init__(self, root, train=True, transform=None, target_transform=None, digits=[0]):
+    def __init__(self, root, train=True, transform=None, target_transform=None, digits=[0], fraction=1.0):
         self.transform = transform
         self.target_transform = target_transform
 
@@ -34,8 +34,8 @@ class LimitedMNIST(data.Dataset):
         self.mnist.target = self.mnist.target[indices]
 
         if train:
-            self.mnist.data = self.mnist.data[:40000]
-            self.mnist.target = self.mnist.target[:40000]
+            self.mnist.data = self.mnist.data[:int(40000*fraction)]
+            self.mnist.target = self.mnist.target[:int(40000*fraction)]
         else:
             self.mnist.data = self.mnist.data[40000:]
             self.mnist.target = self.mnist.target[40000:]
