@@ -2,3 +2,6 @@ __pycache__
 raw
 processed
 .idea
+.DS_Store
+.ipynb_checkpoints
+mldata

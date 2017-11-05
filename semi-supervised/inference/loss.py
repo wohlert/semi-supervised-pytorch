@@ -3,31 +3,45 @@ from torch import nn
 import torch.nn.functional as F
 
 
+EPSILON = 1e-7
+
+
 def kl_divergence_normal(mu, log_var):
-    r"""
+    """
     Returns the KL-divergence between an [isotropic] normal
     distribution with parameters mu and log_var and a
-    standard normal ~ KL(N(mu, var) || N(0, I))
+    standard normal, equivalent to KL(N(mu, var) || N(0, I))
+
     :param mu: (torch.Tensor) mean of distribution
     :param log_var: (torch.Tensor) log variance of distribution
     :return: (torch.Tensor) KL(N(mu, var) || N(0, I))
     """
-    return 0.5 * torch.sum(mu ** 2 + torch.exp(log_var) - log_var - 1.)
+    return 0.5 * (1. + log_var - mu**2 - torch.exp(log_var))
 
 
-def uniform_prior(x):
-    [_, n] = x.size()
+def discrete_uniform_prior(x):
+    """
+    Calculates the cross entropy between a categorical
+    vector and a uniform prior.
 
-    prior = (1. / n) * torch.ones(x.size())
+    :param x: (torch.autograd.Variable)
+    :return: (torch.autograd.Variable) entropy
+    """
+    [batch_size, n] = x.size()
+
+    # Uniform prior over y
+    prior = (1. / n) * torch.ones(batch_size, n)
     prior = F.softmax(prior)
 
-    return -F.cross_entropy(prior, x)
+    cross_entropy = -torch.sum(x * torch.log(prior + EPSILON), dim=1)
+
+    return -cross_entropy
 
 
 class VariationalInference(nn.Module):
     """
     Variational autoencoder loss function
-    as described by (Kingma 2013).
+    as described in (Kingma, 2013).
 
     :param reconstruction: (function) Autoencoder reconstruction loss
     :param kl_div: (function) KL-divergence function
@@ -46,16 +60,16 @@ class VariationalInference(nn.Module):
         :param log_var: (torch.Tensor) log variance of z
         :return: (torch.Tensor) loss
         """
-        log_likelihood = self.reconstruction(r, x, size_average=False)
-        kl_divergence = self.kl_div(mu, log_var)
+        log_likelihood = self.reconstruction(r, x)
+        kl_divergence = torch.sum(self.kl_div(mu, log_var))
 
-        return log_likelihood + kl_divergence
+        return log_likelihood - kl_divergence
 
 
 class VariationalInferenceWithLabels(VariationalInference):
     """
     Loss function for labelled data points
-    as described by (Kingma 2014).
+    as described in (Kingma, 2014).
 
     :param prior_y (function) function to calculate the
         entropy between y and some discrete categorical
@@ -63,21 +77,20 @@ class VariationalInferenceWithLabels(VariationalInference):
     """
     def __init__(self, reconstruction, kl_div, prior_y):
         super(VariationalInferenceWithLabels, self).__init__(reconstruction, kl_div)
-        self.label_prior = prior_y
+        self.prior_y = prior_y
 
-    def forward(self, r, x, y, z, z_mu, z_log_var):
+    def forward(self, r, x, y, mu, log_var):
         """
         Compute loss.
         :param r: reconstruction
         :param x: original
         :param y: label
-        :param z: latent variable
-        :param z_mu: mean of z
-        :param z_log_var: log variance of z
+        :param mu: mean of z
+        :param log_var: log variance of z
         :return: loss
         """
         log_prior_y = self.prior_y(y)
         log_likelihood = self.reconstruction(r, x)
-        kl_divergence = self.kl_div(z_mu, z_log_var)
+        kl_divergence = torch.sum(self.kl_div(mu, log_var), dim=-1)
 
-        return log_likelihood + kl_divergence + log_prior_y
+        return log_likelihood + log_prior_y + kl_divergence
