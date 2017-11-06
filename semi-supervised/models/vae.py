@@ -7,14 +7,13 @@ This "Latent-feature discriminative model" is eqiuvalent
 to a classifier with VAE latent representation as input.
 """
 
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
+from ..layers.stochastic import StochasticGaussian
 
 
 class Encoder(nn.Module):
-    r"""
+    """
     Inference network
 
     Attempts to infer the probability distribution
@@ -32,20 +31,19 @@ class Encoder(nn.Module):
         neurons = [x_dim, *h_dim]
         linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
         self.hidden = nn.ModuleList(linear_layers)
-        self.mu = nn.Linear(h_dim[-1], z_dim)
-        self.log_var = nn.Linear(h_dim[-1], z_dim)
+        self.sample = StochasticGaussian(h_dim[-1], z_dim)
 
     def forward(self, x):
         for i, layer in enumerate(self.hidden):
             x = layer(x)
             if i < len(self.hidden) - 1:
                 x = F.relu(x)
-        return self.mu(x), self.log_var(x)
+        return self.sample(x)
 
 
 class Decoder(nn.Module):
-    r"""
-    Generator network
+    """
+    Generative network
 
     Generates samples from the original distribution
     p(x) by transforming a latent representation, e.g.
@@ -72,7 +70,7 @@ class Decoder(nn.Module):
 
 
 class VariationalAutoencoder(nn.Module):
-    r"""
+    """
     Variational Autoencoder model consisting
     of an encoder/decoder pair for which a
     variational distribution is fitted to the
@@ -92,33 +90,16 @@ class VariationalAutoencoder(nn.Module):
         self.decoder = Decoder([z_dim, list(reversed(h_dim)), x_dim])
 
     def forward(self, x):
-        mu, log_var = self.encoder(x)
-        z = self.reparametrize(mu, log_var)
+        z, mu, log_var = self.encoder(x)
         x_hat = self.decoder(z)
 
         return x_hat, (z, mu, log_var)
 
     def generate(self, z):
-        r"""
+        """
         Given z ~ N(0, I) generates a sample from
         the learning distribution based on p_θ(x|z).
         :param z: (torch.autograd.Variable) Random normal variable
         :return: (torch.autograd.Variable) generated sample
         """
         return self.decoder(z)
-
-    def reparametrize(self, mu, log_var):
-        r"""
-        Performs the reparametrisation trick as described
-        by (Kingma 2013) in order to backpropagate through
-        stochastic units.
-        :param mu: (torch.autograd.Variable) mean of normal distribution
-        :param log_var: (torch.autograd.Variable) log variance of normal distribution
-        :return: (torch.autograd.Variable) a sample from the distribution
-        """
-        epsilon = Variable(torch.randn(*mu.size()))
-        std = torch.exp(0.5 * log_var)
-
-        z = mu + std * epsilon
-
-        return z

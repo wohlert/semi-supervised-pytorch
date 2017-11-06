@@ -65,9 +65,7 @@ class DeepGenerativeModel(VariationalAutoencoder):
         logits = self.classifier(x)
 
         # Add label and data and generate latent variable
-        z_mu, z_log_var = self.encoder(self.transform_x_to_h(x) + self.transform_y_to_h(y))
-        z = self.reparametrize(z_mu, z_log_var)
-
+        z, z_mu, z_log_var = self.encoder(self.transform_x_to_h(x) + self.transform_y_to_h(y))
         # Reconstruct data point from latent data and label
         reconstruction = self.decoder(z + self.transform_y_to_z(y))
 
