@@ -52,7 +52,7 @@ class DeepGenerativeModel(VariationalAutoencoder):
         super(DeepGenerativeModel, self).__init__([self.x_dim, self.z_dim, self.h_dim])
 
         self.encoder = Encoder([self.h_dim[0], self.h_dim, self.z_dim])
-        self.decoder = Decoder([self.z_dim, self.h_dim, self.x_dim])
+        self.decoder = Decoder([self.z_dim, list(reversed(self.h_dim)), self.x_dim])
         self.classifier = Classifier([self.x_dim, self.h_dim[0], self.y_dim])
 
         # Transform layers
@@ -60,24 +60,29 @@ class DeepGenerativeModel(VariationalAutoencoder):
         self.transform_y_to_h = nn.Linear(self.y_dim, self.h_dim[0])
         self.transform_y_to_z = nn.Linear(self.y_dim, self.z_dim)
 
-    def forward(self, x, y):
+    def forward(self, x, y=None):
         # Classify the data point
         logits = self.classifier(x)
 
+        if y is None:
+            return logits
+
         # Add label and data and generate latent variable
         z, z_mu, z_log_var = self.encoder(self.transform_x_to_h(x) + self.transform_y_to_h(y))
+
         # Reconstruct data point from latent data and label
         reconstruction = self.decoder(z + self.transform_y_to_z(y))
 
         return reconstruction, logits, [z, z_mu, z_log_var]
 
-    def generate(self, z, y):
+    def sample(self, z, y):
         """
         Samples from the Decoder to generate an x.
         :param z: Latent normal variable
-        :param y: label
+        :param y: label (one-hot encoded)
         :return: x
         """
         y = y.type(torch.FloatTensor)
         y = self.transform_y_to_z(y)
-        return self.decoder(z + y)
+        x_mu = self.decoder(z + y)
+        return x_mu

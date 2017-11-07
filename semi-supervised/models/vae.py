@@ -9,7 +9,9 @@ to a classifier with VAE latent representation as input.
 
 import torch.nn as nn
 import torch.nn.functional as F
-from ..layers.stochastic import StochasticGaussian
+from torch.nn import init
+
+from layers import StochasticGaussian
 
 
 class Encoder(nn.Module):
@@ -27,9 +29,11 @@ class Encoder(nn.Module):
     """
     def __init__(self, dims):
         super(Encoder, self).__init__()
+
         [x_dim, h_dim, z_dim] = dims
         neurons = [x_dim, *h_dim]
         linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
+
         self.hidden = nn.ModuleList(linear_layers)
         self.sample = StochasticGaussian(h_dim[-1], z_dim)
 
@@ -55,9 +59,11 @@ class Decoder(nn.Module):
     """
     def __init__(self, dims):
         super(Decoder, self).__init__()
+
         [z_dim, h_dim, x_dim] = dims
         neurons = [z_dim, *h_dim]
         linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
+
         self.hidden = nn.ModuleList(linear_layers)
         self.reconstruction = nn.Linear(h_dim[-1], x_dim)
         self.output_activation = nn.Sigmoid()
@@ -85,9 +91,17 @@ class VariationalAutoencoder(nn.Module):
     """
     def __init__(self, dims):
         super(VariationalAutoencoder, self).__init__()
+
         [x_dim, z_dim, h_dim] = dims
+
         self.encoder = Encoder([x_dim, h_dim, z_dim])
         self.decoder = Decoder([z_dim, list(reversed(h_dim)), x_dim])
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_normal(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.zero_()
 
     def forward(self, x):
         z, mu, log_var = self.encoder(x)
@@ -95,10 +109,10 @@ class VariationalAutoencoder(nn.Module):
 
         return x_hat, (z, mu, log_var)
 
-    def generate(self, z):
+    def sample(self, z):
         """
         Given z ~ N(0, I) generates a sample from
-        the learning distribution based on p_θ(x|z).
+        the learned distribution based on p_θ(x|z).
         :param z: (torch.autograd.Variable) Random normal variable
         :return: (torch.autograd.Variable) generated sample
         """

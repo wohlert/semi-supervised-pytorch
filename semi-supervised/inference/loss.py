@@ -1,3 +1,4 @@
+import math
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -79,7 +80,7 @@ class VariationalInferenceWithLabels(VariationalInference):
         super(VariationalInferenceWithLabels, self).__init__(reconstruction, kl_div)
         self.prior_y = prior_y
 
-    def forward(self, r, x, y, mu, log_var):
+    def forward(self, r, x, y, latent):
         """
         Compute loss.
         :param r: reconstruction
@@ -91,6 +92,6 @@ class VariationalInferenceWithLabels(VariationalInference):
         """
         log_prior_y = self.prior_y(y)
         log_likelihood = self.reconstruction(r, x)
-        kl_divergence = torch.sum(self.kl_div(mu, log_var), dim=-1)
+        kl_divergence = [torch.sum(self.kl_div(mu, log_var), dim=-1) for _, mu, log_var in latent]
 
-        return log_likelihood + log_prior_y + kl_divergence
+        return log_likelihood + log_prior_y + sum(kl_divergence)
