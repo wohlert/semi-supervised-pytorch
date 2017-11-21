@@ -2,25 +2,34 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
-
+from torch.autograd import Variable
+from utils import log_sum_exp
 
 EPSILON = 1e-7
 
 
-def kl_divergence_normal(mu, log_var):
+def log_gaussian(x, mu, log_var):
     """
-    Returns the KL-divergence between an [isotropic] normal
-    distribution with parameters mu and log_var and a
-    standard normal, equivalent to KL(N(mu, var) || N(0, I))
-
-    :param mu: (torch.Tensor) mean of distribution
-    :param log_var: (torch.Tensor) log variance of distribution
-    :return: (torch.Tensor) KL(N(mu, var) || N(0, I))
+    Returns the log CDF of a normal distribution.
+    :param x: point to evaluate
+    :param mu: mean of distribution
+    :param log_var: log variance of distribution
+    :return: log cdf(x)
     """
-    return 0.5 * (1. + log_var - mu**2 - torch.exp(log_var))
+    log_pdf = - 0.5 * math.log(2 * math.pi) - log_var / 2 - (x - mu) ** 2 / (2 * torch.exp(log_var))
+    return torch.sum(log_pdf, dim=1)
 
 
-def discrete_uniform_prior(x):
+def log_standard_gaussian(x):
+    """
+    Evaluates the log CDF of a standard normal distribution
+    :param x: point to evaluated
+    :return: log cdf(x)
+    """
+    return torch.sum(- 0.5 * math.log(2 * math.pi) - x ** 2 / 2, dim=1)
+
+
+def log_multinomial(x):
     """
     Calculates the cross entropy between a categorical
     vector and a uniform prior.
@@ -32,7 +41,8 @@ def discrete_uniform_prior(x):
 
     # Uniform prior over y
     prior = (1. / n) * torch.ones(batch_size, n)
-    prior = F.softmax(prior)
+    prior = Variable(prior)
+    prior = F.softmax(prior, dim=-1)
 
     cross_entropy = -torch.sum(x * torch.log(prior + EPSILON), dim=1)
 
@@ -47,12 +57,14 @@ class VariationalInference(nn.Module):
     :param reconstruction: (function) Autoencoder reconstruction loss
     :param kl_div: (function) KL-divergence function
     """
-    def __init__(self, reconstruction, kl_div):
+    def __init__(self, reconstruction, temperature=1.0, eq=1, iw=1):
         super(VariationalInference, self).__init__()
         self.reconstruction = reconstruction
-        self.kl_div = kl_div
+        self.temperature = temperature
+        self.eq = eq
+        self.iw = iw
 
-    def forward(self, r, x, mu, log_var):
+    def forward(self, r, x, latent):
         """
         Compute loss.
         :param r: (torch.Tensor) reconstruction
@@ -61,10 +73,15 @@ class VariationalInference(nn.Module):
         :param log_var: (torch.Tensor) log variance of z
         :return: (torch.Tensor) loss
         """
+        z, mu, log_var = latent
         log_likelihood = self.reconstruction(r, x)
-        kl_divergence = torch.sum(self.kl_div(mu, log_var))
+        kl_divergence = log_standard_gaussian(z) - log_gaussian(z, mu, log_var)
 
-        return log_likelihood - kl_divergence
+        ELBO = log_likelihood - self.temperature * kl_divergence
+        ELBO = ELBO.view(-1, self.eq, self.iw, 1)
+
+        # Inner mean over IW samples and other mean of E_q samples
+        return torch.mean(log_sum_exp(ELBO, dim=2, sum_op=torch.mean), dim=1)
 
 
 class VariationalInferenceWithLabels(VariationalInference):
@@ -76,9 +93,8 @@ class VariationalInferenceWithLabels(VariationalInference):
         entropy between y and some discrete categorical
         distribution.
     """
-    def __init__(self, reconstruction, kl_div, prior_y):
-        super(VariationalInferenceWithLabels, self).__init__(reconstruction, kl_div)
-        self.prior_y = prior_y
+    def __init__(self, reconstruction, temperature, eq=1, iw=1):
+        super(VariationalInferenceWithLabels, self).__init__(reconstruction, temperature, eq, iw)
 
     def forward(self, r, x, y, latent):
         """
@@ -90,8 +106,14 @@ class VariationalInferenceWithLabels(VariationalInference):
         :param log_var: log variance of z
         :return: loss
         """
-        log_prior_y = self.prior_y(y)
+        log_prior_y = log_multinomial(y)
         log_likelihood = self.reconstruction(r, x)
-        kl_divergence = [torch.sum(self.kl_div(mu, log_var), dim=-1) for _, mu, log_var in latent]
+        kl_divergence = torch.cat([log_standard_gaussian(z) - log_gaussian(z, mu, log_var) for z, mu, log_var in latent])
 
-        return log_likelihood + log_prior_y + sum(kl_divergence)
+        ELBO = log_likelihood + log_prior_y + self.temperature * kl_divergence
+        ELBO = ELBO.view(-1, self.eq, self.iw, 1)
+
+        # Inner mean over IW samples and other mean of E_q samples
+        return torch.mean(log_sum_exp(ELBO, dim=2, sum_op=torch.mean), dim=1)
+
+

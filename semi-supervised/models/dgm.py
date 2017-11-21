@@ -11,8 +11,16 @@ inference and generation.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
+from torch.nn import init
 
+from utils import generate_label
 from .vae import VariationalAutoencoder, Encoder, Decoder
+
+
+# Shorthand cross_entropy till fix in next version of PyTorch
+def cross_entropy(logits, y):
+    return -torch.sum(y * torch.log(logits + 1e-8), dim=1)
 
 
 class Classifier(nn.Module):
@@ -29,7 +37,7 @@ class Classifier(nn.Module):
 
     def forward(self, x):
         x = F.relu(self.dense(x))
-        x = self.output_activation(self.logits(x))
+        x = self.output_activation(self.logits(x), dim=-1)
         return x
 
 
@@ -60,6 +68,12 @@ class DeepGenerativeModel(VariationalAutoencoder):
         self.transform_y_to_h = nn.Linear(self.y_dim, self.h_dim[0])
         self.transform_y_to_z = nn.Linear(self.y_dim, self.z_dim)
 
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_normal(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+
     def forward(self, x, y=None):
         # Classify the data point
         logits = self.classifier(x)
@@ -73,7 +87,7 @@ class DeepGenerativeModel(VariationalAutoencoder):
         # Reconstruct data point from latent data and label
         reconstruction = self.decoder(z + self.transform_y_to_z(y))
 
-        return reconstruction, logits, [z, z_mu, z_log_var]
+        return reconstruction, logits, [[z, z_mu, z_log_var]]
 
     def sample(self, z, y):
         """

@@ -1,7 +1,6 @@
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class StochasticGaussian(nn.Module):
@@ -32,16 +31,3 @@ class StochasticGaussian(nn.Module):
         z = mu + std * epsilon
 
         return z, mu, log_var
-
-
-class StochasticMultinomial(nn.Module):
-    """
-
-    """
-    def __init__(self, input_dim, output_dim):
-        super(StochasticMultinomial, self).__init__()
-
-    def forward(self, x):
-        pi = x
-        x = F.softmax(pi)
-        return x

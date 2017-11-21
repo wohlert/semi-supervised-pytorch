@@ -31,3 +31,15 @@ def onehot(k):
         y[label] = 1
         return y
     return hot_vector
+
+
+def log_sum_exp(tensor, dim=None, sum_op=torch.sum):
+    """
+    Uses the LogSumExp (LSE) as an approximation for the sum in a log-domain.
+    :param tensor: Tensor to compute LSE over
+    :param dim: dimension to perform operation over
+    :param sum_op: reductive operation to be applied, e.g. torch.sum or torch.mean
+    :return: LSE
+    """
+    max, _ = torch.max(tensor, dim=dim, keepdim=True)
+    return torch.log(sum_op(torch.exp(tensor - max), dim=dim, keepdim=True)) + max
