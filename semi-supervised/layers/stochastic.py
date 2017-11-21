@@ -26,6 +26,10 @@ class StochasticGaussian(nn.Module):
         log_var = self.log_var(x)
 
         epsilon = Variable(torch.randn(*mu.size()))
+
+        if self.mu.is_cuda:
+            epsilon = epsilon.cuda()
+
         std = torch.exp(0.5 * log_var)
 
         z = mu + std * epsilon

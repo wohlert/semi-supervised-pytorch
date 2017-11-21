@@ -42,6 +42,10 @@ def log_multinomial(x):
     # Uniform prior over y
     prior = (1. / n) * torch.ones(batch_size, n)
     prior = Variable(prior)
+
+    if x.is_cuda:
+        prior = prior.cuda()
+
     prior = F.softmax(prior, dim=-1)
 
     cross_entropy = -torch.sum(x * torch.log(prior + EPSILON), dim=1)

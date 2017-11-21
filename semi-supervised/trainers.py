@@ -18,6 +18,7 @@ class SemiSupervisedTrainer:
         self.optimizer = optimizer
         self.logger = logger
         self.cuda = cuda
+        if cuda: model.cuda()
 
     def _calculate_loss(self, x, y=None):
         pass
@@ -85,6 +86,10 @@ class DGMTrainer(VAETrainer):
         x = x.repeat(self.objective.iw * self.objective.eq, 1)
 
         x = Variable(x)
+
+        if self.cuda:
+            x = x.cuda()
+
         logits = self.model(x)
 
         # If the data is unlabelled, sum over all classes
