@@ -6,10 +6,8 @@ M1 code replication from the paper
 This "Latent-feature discriminative model" is eqiuvalent
 to a classifier with VAE latent representation as input.
 """
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 from torch.nn import init
 
 from layers import StochasticGaussian
@@ -42,7 +40,7 @@ class Encoder(nn.Module):
         for i, layer in enumerate(self.hidden):
             x = layer(x)
             if i < len(self.hidden) - 1:
-                x = F.relu(x)
+                x = F.softplus(x)
         return self.sample(x)
 
 
@@ -71,7 +69,7 @@ class Decoder(nn.Module):
 
     def forward(self, x):
         for i, layer in enumerate(self.hidden):
-            x = F.relu(layer(x))
+            x = F.softplus(layer(x))
         x = self.output_activation(self.reconstruction(x))
         return x
 
@@ -93,10 +91,10 @@ class VariationalAutoencoder(nn.Module):
     def __init__(self, dims):
         super(VariationalAutoencoder, self).__init__()
 
-        [x_dim, z_dim, h_dim] = dims
+        [x_dim, self.z_dim, h_dim] = dims
 
-        self.encoder = Encoder([x_dim, h_dim, z_dim])
-        self.decoder = Decoder([z_dim, list(reversed(h_dim)), x_dim])
+        self.encoder = Encoder([x_dim, h_dim, self.z_dim])
+        self.decoder = Decoder([self.z_dim, list(reversed(h_dim)), x_dim])
 
         for m in self.modules():
             if isinstance(m, nn.Linear):

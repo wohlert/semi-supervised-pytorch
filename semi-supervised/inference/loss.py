@@ -3,7 +3,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from utils import log_sum_exp
 
 EPSILON = 1e-7
 
@@ -29,10 +28,10 @@ def log_standard_gaussian(x):
     return torch.sum(- 0.5 * math.log(2 * math.pi) - x ** 2 / 2, dim=1)
 
 
-def log_multinomial(x):
+def log_standard_categorical(x):
     """
-    Calculates the cross entropy between a categorical
-    vector and a uniform prior.
+    Calculates the entropy between a categorical vector
+    and a standard (uniform) categorical distribution.
 
     :param x: (torch.autograd.Variable)
     :return: (torch.autograd.Variable) entropy
@@ -61,12 +60,9 @@ class VariationalInference(nn.Module):
     :param reconstruction: (function) Autoencoder reconstruction loss
     :param kl_div: (function) KL-divergence function
     """
-    def __init__(self, reconstruction, temperature=1.0, eq=1, iw=1):
+    def __init__(self, reconstruction):
         super(VariationalInference, self).__init__()
         self.reconstruction = reconstruction
-        self.temperature = temperature
-        self.eq = eq
-        self.iw = iw
 
     def forward(self, r, x, latent):
         """
@@ -81,24 +77,16 @@ class VariationalInference(nn.Module):
         log_likelihood = self.reconstruction(r, x)
         kl_divergence = log_standard_gaussian(z) - log_gaussian(z, mu, log_var)
 
-        ELBO = log_likelihood - self.temperature * kl_divergence
-        ELBO = ELBO.view(-1, self.eq, self.iw, 1)
-
-        # Inner mean over IW samples and other mean of E_q samples
-        return torch.mean(log_sum_exp(ELBO, dim=2, sum_op=torch.mean), dim=1)
+        return log_likelihood, kl_divergence
 
 
 class VariationalInferenceWithLabels(VariationalInference):
     """
     Loss function for labelled data points
     as described in (Kingma, 2014).
-
-    :param prior_y (function) function to calculate the
-        entropy between y and some discrete categorical
-        distribution.
     """
-    def __init__(self, reconstruction, temperature, eq=1, iw=1):
-        super(VariationalInferenceWithLabels, self).__init__(reconstruction, temperature, eq, iw)
+    def __init__(self, reconstruction):
+        super(VariationalInferenceWithLabels, self).__init__(reconstruction)
 
     def forward(self, r, x, y, latent):
         """
@@ -110,14 +98,8 @@ class VariationalInferenceWithLabels(VariationalInference):
         :param log_var: log variance of z
         :return: loss
         """
-        log_prior_y = log_multinomial(y)
+        log_prior_y = log_standard_categorical(y)
         log_likelihood = self.reconstruction(r, x)
         kl_divergence = torch.cat([log_standard_gaussian(z) - log_gaussian(z, mu, log_var) for z, mu, log_var in latent])
 
-        ELBO = log_likelihood + log_prior_y + self.temperature * kl_divergence
-        ELBO = ELBO.view(-1, self.eq, self.iw, 1)
-
-        # Inner mean over IW samples and other mean of E_q samples
-        return torch.mean(log_sum_exp(ELBO, dim=2, sum_op=torch.mean), dim=1)
-
-
+        return log_likelihood, kl_divergence, log_prior_y

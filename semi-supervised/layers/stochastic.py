@@ -1,6 +1,7 @@
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class StochasticGaussian(nn.Module):
@@ -18,20 +19,24 @@ class StochasticGaussian(nn.Module):
         Performs the reparametrisation trick as described
         by (Kingma 2013) in order to backpropagate through
         stochastic units.
-        :param mu: (torch.autograd.Variable) mean of normal distribution
-        :param log_var: (torch.autograd.Variable) log variance of normal distribution
+        :param x: (torch.autograd.Variable) input tensor
         :return: (torch.autograd.Variable) a sample from the distribution
         """
         mu = self.mu(x)
         log_var = self.log_var(x)
 
-        epsilon = Variable(torch.randn(*mu.size()))
+        epsilon = Variable(torch.randn(mu.size()), requires_grad=False)
 
-        if self.mu.is_cuda:
+        if x.is_cuda:
             epsilon = epsilon.cuda()
 
-        std = torch.exp(0.5 * log_var)
+        # std = exp(0.5 * log_var)
+        std = log_var.mul(0.5).exp_()
 
-        z = mu + std * epsilon
+        # z = std * epsilon + mu
+        z = mu.addcmul_(std, epsilon)
+
+        if not self.training:
+            z = mu
 
         return z, mu, log_var

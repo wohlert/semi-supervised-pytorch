@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def plot_latent(projection, images, labels, fraction):
+def latent_scatter(projection, images, labels, fraction):
     fig, ax = plt.subplots(figsize=(20, 10))
     
     ax.scatter(*projection.T, c=labels, cmap="viridis")
@@ -20,3 +20,23 @@ def plot_latent(projection, images, labels, fraction):
         ax.add_artist(imagebox)
         
     return ax
+
+
+def latent_imshow(z_min, z_max, n, model):
+    size = 28
+    x = y = np.linspace(z_min, z_max, n)
+    grid = np.zeros(shape=(size*n, size*n))
+
+    for i, z_x in enumerate(x):
+        for j, z_y in enumerate(y):
+            z = Variable(torch.FloatTensor([z_x, z_y]))
+            sample = model.sample(z).cpu()
+            sample = sample.data.cpu().numpy().reshape(size, size)
+            grid[size*i:size*(i+1), size*j:size*(j+1)] = sample
+
+    fig, axes = plt.subplots(1, 1, figsize=(8, 8), dpi=100)
+    plt.imshow(grid, extent=[z_min, z_max, z_min, z_max])
+
+    plt.title('VAE latent space representation', fontsize = 14)
+    plt.xlabel('z dimension 1', fontsize = 14)
+    plt.ylabel('z dimension 2', fontsize = 14)
