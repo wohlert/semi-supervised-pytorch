@@ -84,9 +84,6 @@ class VariationalAutoencoder(nn.Module):
     :param dims (list (int)): Dimensions of the networks
         given by the number of neurons on the form
         [input_dim, [hidden_dims], latent_dim].
-    :return: (x_hat, latent) where latent is represented
-        by parameters of the z-distribution along with a
-        sample.
     """
     def __init__(self, dims):
         super(VariationalAutoencoder, self).__init__()
@@ -103,6 +100,16 @@ class VariationalAutoencoder(nn.Module):
                     m.bias.data.zero_()
 
     def forward(self, x):
+        """
+        Runs a data point through the model in order
+        to provide its reconstruction and q distribution
+        parameters
+
+        :param x (torch.autograd.Variable): input data
+        :return: (x_hat, latent) where latent is represented
+        by parameters of the z-distribution along with a
+        sample
+        """
         z, mu, log_var = self.encoder(x)
         x_hat = self.decoder(z)
 
@@ -116,3 +123,17 @@ class VariationalAutoencoder(nn.Module):
         :return: (torch.autograd.Variable) generated sample
         """
         return self.decoder(z)
+
+
+class LadderVariationalAutoencoder(nn.Module):
+    """
+    Ladder Variational Autoencoder as described by
+    Sønderby et al (2016). Adds several stochastic
+    layers to improve the log-likelihood estimate.
+
+    :param dims (list (int)): Dimensions of the networks
+        given by the number of neurons on the form
+        [input_dim, [hidden_dims], latent_dim].
+    """
+    def __init__(self, dims):
+        super(LadderVariationalAutoencoder, self).__init__(dims)

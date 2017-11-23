@@ -21,8 +21,8 @@ The image below shows the training procedure in [visdom](https://github.com/face
 * [Variational Autoencoder (Kingma 2013)](https://arxiv.org/abs/1312.6114)
 * [Semi-supervised Learning with Deep Generative Models (Kingma 2014)](https://arxiv.org/abs/1406.5298)
 * [Auxiliary Deep Generative Models (Maaløe 2016)](https://arxiv.org/abs/1602.05473)
+* [Importance Weighted Autoencoders (Burda 2015)](https://arxiv.org/abs/1509.00519)
 
 ## Planned models and methods
 
 * [Ladder Variational Autoencoders (Sønderby 2016)](https://arxiv.org/abs/1602.02282)
-* [Importance Weighted Autoencoders (Burda 2015)](https://arxiv.org/abs/1509.00519)
