@@ -1,4 +1,5 @@
 import torch
+from pyro.distributions import categorical
 
 
 def generate_label(batch_size, label, nlabels=2):
@@ -16,6 +17,18 @@ def generate_label(batch_size, label, nlabels=2):
     y = torch.zeros((batch_size, nlabels))
     y.scatter_(1, labels, 1)
     return y.type(torch.LongTensor)
+
+
+def enumerate_choices(x, y_dim):
+    """
+    See `generate_label`.
+    """
+    [batch_size, *_] = x.size()
+    x = x.repeat(y_dim, 1)
+    y = torch.ones(batch_size, y_dim).type(type(x.data))
+    y = categorical.enumerate_support(y)
+    y = y.view(-1, y_dim)
+    return y
 
 
 def onehot(k):

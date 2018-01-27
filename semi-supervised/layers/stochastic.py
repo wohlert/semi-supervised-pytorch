@@ -4,15 +4,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class StochasticGaussian(nn.Module):
+class GaussianSample(nn.Module):
     """
     Layer that represents a sample from a
     Gaussian distribution.
     """
-    def __init__(self, input_dim, z_dim):
-        super(StochasticGaussian, self).__init__()
-        self.mu = nn.Linear(input_dim, z_dim)
-        self.log_var = nn.Linear(input_dim, z_dim)
+    def __init__(self, in_features, out_features):
+        super(GaussianSample, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+
+        self.mu = nn.Linear(in_features, out_features)
+        self.log_var = nn.Linear(in_features, out_features)
 
     def forward(self, x):
         """
@@ -23,20 +26,32 @@ class StochasticGaussian(nn.Module):
         :return: (torch.autograd.Variable) a sample from the distribution
         """
         mu = self.mu(x)
-        log_var = self.log_var(x)
+        log_var = F.softplus(self.log_var(x))
 
         epsilon = Variable(torch.randn(mu.size()), requires_grad=False)
 
         if x.is_cuda:
             epsilon = epsilon.cuda()
 
-        # std = exp(0.5 * log_var)
+        # log_std = 0.5 * log_var
+        # std = exp(log_std)
         std = log_var.mul(0.5).exp_()
 
         # z = std * epsilon + mu
         z = mu.addcmul_(std, epsilon)
 
+        # When evaluating get the MAP estimate
         if not self.training:
             z = mu
 
         return z, mu, log_var
+
+
+class GaussianMerge(nn.Module):
+    def forward(self, mu1, mu2, logvar1, logvar2):
+        precision1, precision2 = (1/logvar1, 1/logvar2)
+
+        mu = ((mu1 * precision1) + (mu2 * precision2)) / (precision1 + precision2)
+        logvar = 1 / (precision1 + precision2) #TODO: check that this should be log
+
+        return mu, logvar

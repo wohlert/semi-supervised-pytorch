@@ -10,7 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import init
 
-from layers import StochasticGaussian
+from layers import GaussianSample
+from inference import log_gaussian, log_standard_gaussian
 
 
 class Encoder(nn.Module):
@@ -34,13 +35,13 @@ class Encoder(nn.Module):
         linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
 
         self.hidden = nn.ModuleList(linear_layers)
-        self.sample = StochasticGaussian(h_dim[-1], z_dim)
+        self.sample = GaussianSample(h_dim[-1], z_dim)
 
     def forward(self, x):
         for i, layer in enumerate(self.hidden):
             x = layer(x)
             if i < len(self.hidden) - 1:
-                x = F.softplus(x)
+                x = F.relu(x)
         return self.sample(x)
 
 
@@ -69,9 +70,8 @@ class Decoder(nn.Module):
 
     def forward(self, x):
         for i, layer in enumerate(self.hidden):
-            x = F.softplus(layer(x))
-        x = self.output_activation(self.reconstruction(x))
-        return x
+            x = F.relu(layer(x))
+        return self.output_activation(self.reconstruction(x))
 
 
 class VariationalAutoencoder(nn.Module):
@@ -99,7 +99,29 @@ class VariationalAutoencoder(nn.Module):
                 if m.bias is not None:
                     m.bias.data.zero_()
 
-    def forward(self, x):
+    def _kl_divergence(self, z, param1, param2=None):
+        """
+        Computes the KL-divergence of for
+        some element z.
+        :param z:
+        :param param1:
+        :param param2:
+        :return:
+        """
+        if param2 is None:
+            pz = log_standard_gaussian(z)
+        else:
+            (mu, log_var) = param2
+            pz = log_gaussian(z, mu, log_var)
+
+        (mu, log_var) = param1
+        qz = log_gaussian(z, mu, log_var)
+
+        kl = qz - pz
+
+        return kl
+
+    def forward(self, x, y=None):
         """
         Runs a data point through the model in order
         to provide its reconstruction and q distribution
@@ -110,10 +132,13 @@ class VariationalAutoencoder(nn.Module):
         by parameters of the z-distribution along with a
         sample
         """
-        z, mu, log_var = self.encoder(x)
-        x_hat = self.decoder(z)
+        z, z_mu, z_log_var = self.encoder(x)
 
-        return x_hat, (z, mu, log_var)
+        kl = self._kl_divergence(z, (z_mu, z_log_var))
+
+        x_mu = self.decoder(z)
+
+        return x_mu, kl
 
     def sample(self, z):
         """
@@ -125,7 +150,7 @@ class VariationalAutoencoder(nn.Module):
         return self.decoder(z)
 
 
-class LadderVariationalAutoencoder(nn.Module):
+class LadderVariationalAutoencoder(VariationalAutoencoder):
     """
     Ladder Variational Autoencoder as described by
     Sønderby et al (2016). Adds several stochastic

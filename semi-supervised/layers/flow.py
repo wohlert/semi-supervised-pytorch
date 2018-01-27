@@ -3,24 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class NormalizingFlows(nn.Module):
-    """
-    Presents a sequence of flows as a torch.nn.Module.
-    """
-    def __init__(self, in_features, flow_type=PlanarNormalizingFlow, n_flows=1):
-        super(NormalizingFlows, self).__init__()
-        self.flows = nn.ModuleList([flow_type(in_features) for _ in range(n_flows)])
-
-    def forward(self, z):
-        log_det_jacobian = []
-
-        for flow in self.flows:
-            z, j = flow(z)
-            log_det_jacobian.append(j)
-
-        return z, sum(log_det_jacobian)
-
-
 class PlanarNormalizingFlow(nn.Module):
     """
     Planar normalizing flow as described by Rezende and Mohamed (2015).
@@ -55,3 +37,21 @@ class PlanarNormalizingFlow(nn.Module):
         logdet_jacobian = torch.log(torch.abs(1 + psi_u) + 1e-8)
 
         return f_z, logdet_jacobian
+
+
+class NormalizingFlows(nn.Module):
+    """
+    Presents a sequence of flows as a torch.nn.Module.
+    """
+    def __init__(self, in_features, flow_type=PlanarNormalizingFlow, n_flows=1):
+        super(NormalizingFlows, self).__init__()
+        self.flows = nn.ModuleList([flow_type(in_features) for _ in range(n_flows)])
+
+    def forward(self, z):
+        log_det_jacobian = []
+
+        for flow in self.flows:
+            z, j = flow(z)
+            log_det_jacobian.append(j)
+
+        return z, sum(log_det_jacobian)

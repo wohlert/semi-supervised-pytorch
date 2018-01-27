@@ -1,1 +1,2 @@
-from .stochastic import StochasticGaussian
+from .stochastic import GaussianSample
+from .flow import NormalizingFlows, PlanarNormalizingFlow
