@@ -6,11 +6,13 @@ M1 code replication from the paper
 This "Latent-feature discriminative model" is eqiuvalent
 to a classifier with VAE latent representation as input.
 """
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 from torch.nn import init
 
-from layers import GaussianSample
+from layers import GaussianSample, GaussianMerge
 from inference import log_gaussian, log_standard_gaussian
 
 
@@ -86,10 +88,10 @@ class VariationalAutoencoder(nn.Module):
     def __init__(self, dims):
         super(VariationalAutoencoder, self).__init__()
 
-        [x_dim, self.z_dim, h_dim] = dims
+        [x_dim, z_dim, h_dim] = dims
 
-        self.encoder = Encoder([x_dim, h_dim, self.z_dim])
-        self.decoder = Decoder([self.z_dim, list(reversed(h_dim)), x_dim])
+        self.encoder = Encoder([x_dim, h_dim, z_dim])
+        self.decoder = Decoder([z_dim, list(reversed(h_dim)), x_dim])
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -148,6 +150,30 @@ class VariationalAutoencoder(nn.Module):
         return self.decoder(z)
 
 
+class LadderEncoder(nn.Module):
+    """
+    The ladder encoder differs from the standard encoder
+    by using batch-normalization and ELU activation.
+    Additionally, it also returns the transformation x.
+    """
+    def __init__(self, dims):
+        super(LadderEncoder, self).__init__()
+
+        [x_dim, h_dim, z_dim] = dims
+        neurons = [x_dim, *h_dim]
+        linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
+
+        self.hidden = nn.ModuleList(linear_layers)
+        self.batchnorm = nn.ModuleList([nn.BatchNorm1d(l.out_features) for l in self.hidden])
+        self.sample = GaussianSample(h_dim[-1], z_dim)
+
+    def forward(self, x):
+        for linear, batch in zip(self.hidden, self.batchnorm):
+            x = linear(x)
+            x = F.elu(batch(x))
+        return x, self.sample(x)
+
+
 class LadderVariationalAutoencoder(VariationalAutoencoder):
     """
     Ladder Variational Autoencoder as described by
@@ -156,7 +182,43 @@ class LadderVariationalAutoencoder(VariationalAutoencoder):
 
     :param dims (list (int)): Dimensions of the networks
         given by the number of neurons on the form
-        [input_dim, [hidden_dims], latent_dim].
+        [input_dim, [hidden_dims], [latent_dims]].
     """
     def __init__(self, dims):
-        super(LadderVariationalAutoencoder, self).__init__(dims)
+        [x_dim, z_dim, h_dim] = dims
+        super(LadderVariationalAutoencoder, self).__init__([x_dim, z_dim[0], h_dim])
+
+        neurons = [x_dim, *h_dim]
+        ladder_layers = [LadderEncoder([neurons[i-1], [neurons[i]], z_dim[i-1]]) for i in range(1, len(neurons))]
+
+        self.encoder = nn.ModuleList(ladder_layers)
+        self.merge = [GaussianMerge(z_dim[len(z_dim)-i], z_dim[len(z_dim)-i-1]) for i in range(1, len(z_dim))]
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_normal(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+
+    def forward(self, x):
+        # Gather latent representation
+        # from encoders along with final z.
+        latents = []
+        for encoder in self.encoder:
+            x, (z, mu, log_var) = encoder(x)
+            latents.append((mu, log_var))
+
+        kl = 0
+        for i, latent in enumerate(reversed(latents)):
+            # If at top, encoder == decoder,
+            # use prior for KL.
+            if i == 0:
+                kl += self._kl_divergence(z, latent)
+
+            # Perform downword merge of information.
+            else:
+                z, mu, log_var = self.merge[i-1](z, *latent)
+                kl += self._kl_divergence(z, (mu, log_var), latent)
+
+        x_mu = self.decoder(z)
+        return x_mu, kl

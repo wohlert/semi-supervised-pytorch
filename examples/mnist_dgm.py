@@ -1,9 +1,7 @@
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set_style("whitegrid")
-plt.rcParams["image.cmap"] = "binary"
+import sys
+sys.path.append("../semi-supervised")
 
 cuda = torch.cuda.is_available()
 n_labels = 10

@@ -32,18 +32,19 @@ class DeterministicWarmup(object):
     [Maaløe, Sønderby].
     """
     def __init__(self, init=0, end=1, inc=0.01):
-        self.init = init
+        self.t = init
         self.end = end
         self.inc = inc
 
-    def __call__(self):
-        t = self.init
-        while True:
-            if t > self.end:
-                yield self.end
-            else:
-                t += self.inc
-                yield t
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.t > self.end:
+            return self.end
+        else:
+            self.t += self.inc
+            return self.t
 
 
 # Shorthand cross_entropy till fix in next version of PyTorch

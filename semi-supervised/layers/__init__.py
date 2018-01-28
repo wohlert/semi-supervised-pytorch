@@ -1,2 +1,2 @@
-from .stochastic import GaussianSample
+from .stochastic import GaussianSample, GaussianMerge
 from .flow import NormalizingFlows, PlanarNormalizingFlow
