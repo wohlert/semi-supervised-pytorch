@@ -48,14 +48,15 @@ class DeterministicWarmup(object):
 
 # Shorthand cross_entropy till fix in next version of PyTorch
 def cross_entropy(logits, y):
-    return -torch.sum(y * torch.log(logits + 1e-8), dim=1)
+    return -torch.sum(y * torch.log(logits + 1e-6), dim=1)
 
 
 class SVI(nn.Module):
     """
     Stochastic variational inference (SVI).
     """
-    def __init__(self, model, likelihood=F.binary_cross_entropy, beta=repeat(1), is_supervised=True):
+    base_sampler = ImportanceWeightedSampler(mc=1, iw=1)
+    def __init__(self, model, likelihood=F.binary_cross_entropy, is_supervised=True, beta=repeat(1), sampler=base_sampler):
         """
         Initialises a new SVI optimizer for semi-
         supervised learning.
@@ -66,7 +67,7 @@ class SVI(nn.Module):
         super(SVI, self).__init__()
         self.model = model
         self.likelihood = likelihood
-        self.sampler = ImportanceWeightedSampler(mc=1, iw=1)
+        self.sampler = sampler
         self.beta = beta
         self.is_supervised = is_supervised
 
@@ -103,6 +104,6 @@ class SVI(nn.Module):
                 elbo = elbo + self.model.alpha * -cross_entropy(logits, y)
             else:
                 elbo = elbo.view(logits.size())
-                elbo = torch.sum(torch.mul(logits, elbo - torch.log(logits)), dim=1)
+                elbo = torch.sum(torch.mul(logits, elbo - torch.log(logits + 1e-8)), dim=1)
 
         return -torch.mean(elbo)

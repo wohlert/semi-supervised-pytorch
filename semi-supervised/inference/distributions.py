@@ -10,7 +10,7 @@ def log_standard_gaussian(x):
     :param x: point to evaluated
     :return: log pdf(x)
     """
-    return torch.sum(-0.5 * math.log(2 * math.pi) - x ** 2 / 2, dim=1)
+    return torch.sum(-0.5 * math.log(2 * math.pi) - x ** 2 / 2, dim=-1)
 
 
 def log_gaussian(x, mu, log_var):
@@ -22,7 +22,7 @@ def log_gaussian(x, mu, log_var):
     :return: log pdf(x)
     """
     log_pdf = - 0.5 * math.log(2 * math.pi) - log_var / 2 - (x - mu)**2 / (2 * torch.exp(log_var))
-    return torch.sum(log_pdf, dim=1)
+    return torch.sum(log_pdf, dim=-1)
 
 
 def log_standard_categorical(x):
@@ -37,7 +37,7 @@ def log_standard_categorical(x):
     prior = F.softmax(torch.ones_like(x), dim=1)
     prior.requires_grad = False
 
-    cross_entropy = -torch.sum(torch.mul(x, torch.log(prior + 1e-8)), dim=1)
+    cross_entropy = -torch.sum(x * torch.log(prior + 1e-6), dim=1)
 
     # Alternatively
     # [_, n] = x.size()

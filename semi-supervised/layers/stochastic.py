@@ -40,10 +40,6 @@ class GaussianSample(nn.Module):
         # z = std * epsilon + mu
         z = mu.addcmul_(std, epsilon)
 
-        # When evaluating get the MAP estimate
-        if not self.training:
-            z = mu
-
         return z, mu, log_var
 
 

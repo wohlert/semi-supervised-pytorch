@@ -38,10 +38,8 @@ class Encoder(nn.Module):
         self.sample = GaussianSample(h_dim[-1], z_dim)
 
     def forward(self, x):
-        for i, layer in enumerate(self.hidden):
-            x = layer(x)
-            if i < len(self.hidden) - 1:
-                x = F.relu(x)
+        for layer in self.hidden:
+            x = F.relu(layer(x))
         return self.sample(x)
 
 
@@ -69,7 +67,7 @@ class Decoder(nn.Module):
         self.output_activation = nn.Sigmoid()
 
     def forward(self, x):
-        for i, layer in enumerate(self.hidden):
+        for layer in self.hidden:
             x = F.relu(layer(x))
         return self.output_activation(self.reconstruction(x))
 
