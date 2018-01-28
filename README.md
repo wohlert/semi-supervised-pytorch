@@ -1,6 +1,7 @@
 # Semi-supervised PyTorch
 
-**Work in progress**.
+**Work in progress**
+**Update January 29th 2018: Several methods have been added now, which will be validated in the coming week.**
 
 A PyTorch-based package containing useful models for modern semi-supervised learning. The models are generally of the deep variety allowing the models to learn in very complex domains.
 
@@ -12,17 +13,11 @@ Semi-supervised learning is typically applied to areas where data is easy to get
 
 The current state-of-the-art method in semi-supervised learning achieves an accuracy of over 99% on the MNIST database using just **10 labelled examples** from each class.
 
-The image below shows the training procedure in [visdom](https://github.com/facebookresearch/visdom) giving an accuracy of 89% on the first five digits only using 50 labels in total.
-
-![Training DGM in visdom](examples/images/visdom-dgm.png)
-
-## Implemented models:
+## Implemented models and methods:
 
 * [Variational Autoencoder (Kingma 2013)](https://arxiv.org/abs/1312.6114)
+* [Importance Weighted Autoencoders (Burda 2015)](https://arxiv.org/abs/1509.00519)
+* [Variational Inference with Normalizing Flows (Rezende & Mohamed 2015)](https://arxiv.org/abs/1505.05770)
 * [Semi-supervised Learning with Deep Generative Models (Kingma 2014)](https://arxiv.org/abs/1406.5298)
 * [Auxiliary Deep Generative Models (Maaløe 2016)](https://arxiv.org/abs/1602.05473)
-* [Importance Weighted Autoencoders (Burda 2015)](https://arxiv.org/abs/1509.00519)
-
-## Planned models and methods
-
 * [Ladder Variational Autoencoders (Sønderby 2016)](https://arxiv.org/abs/1602.02282)
