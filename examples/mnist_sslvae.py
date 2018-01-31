@@ -60,7 +60,7 @@ if __name__ == "__main__":
     from torch.autograd import Variable
     from inference import SVI, DeterministicWarmup, ImportanceWeightedSampler
 
-    labelled, unlabelled, validation = get_mnist(location="./", batch_size=64, labels_per_class=2)
+    labelled, unlabelled, validation = get_mnist(location="./", batch_size=64, labels_per_class=10)
     alpha = 0.1 * len(unlabelled) / len(labelled)
 
     models = []
@@ -172,4 +172,4 @@ if __name__ == "__main__":
 
             if accuracy > best:
                 best = accuracy
-                torch.save(model, 'mnist-{}.pt'.format(model.__class__.__name__))
+                torch.save(model, '{}.pt'.format(model.__class__.__name__))
