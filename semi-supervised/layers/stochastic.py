@@ -6,7 +6,10 @@ import torch.nn.functional as F
 
 class Stochastic(nn.Module):
     """
-    Base stochastic layer.
+    Base stochastic layer that uses the
+    reparametrization trick [Kingma 2013]
+    to draw a sample from a distribution
+    parametrised by mu and log_var.
     """
     def reparametrize(self, mu, log_var):
         epsilon = Variable(torch.randn(mu.size()), requires_grad=False)
@@ -37,13 +40,6 @@ class GaussianSample(Stochastic):
         self.log_var = nn.Linear(in_features, out_features)
 
     def forward(self, x):
-        """
-        Performs the reparametrisation trick as described
-        by (Kingma 2013) in order to backpropagate through
-        stochastic units.
-        :param x: (torch.autograd.Variable) input tensor
-        :return: (torch.autograd.Variable) a sample from the distribution
-        """
         mu = self.mu(x)
         log_var = F.softplus(self.log_var(x))
 
@@ -54,8 +50,7 @@ class GaussianMerge(GaussianSample):
     """
     Precision weighted merging of two Gaussian
     distributions.
-    Uses an GaussianSample layer to merge
-    information from z into the given
+    Merges information from z into the given
     mean and log variance and produces
     a sample from this new distribution.
     """

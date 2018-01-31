@@ -1,15 +1,5 @@
-"""
-M1 code replication from the paper
-'Semi-Supervised Learning with Deep Generative Models'
-(Kingma 2014) in PyTorch.
-
-This "Latent-feature discriminative model" is eqiuvalent
-to a classifier with VAE latent representation as input.
-"""
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 from torch.nn import init
 
 from layers import GaussianSample, GaussianMerge
@@ -25,7 +15,7 @@ class Encoder(nn.Module):
     distribution q_φ(z|x). Returns the two parameters
     of the distribution (µ, log σ²).
 
-    :param dims (list (int)): Dimensions of the networks
+    :param dims: Dimensions of the networks
         given by the number of neurons on the form
         [input_dim, [hidden_dims], latent_dim].
     """
@@ -53,7 +43,7 @@ class Decoder(nn.Module):
     p(x) by transforming a latent representation, e.g.
     by finding p_θ(x|z).
 
-    :param dims (list (int)): Dimensions of the networks
+    :param dims: Dimensions of the networks
         given by the number of neurons on the form
         [latent_dim, [hidden_dims], input_dim].
     """
@@ -76,14 +66,12 @@ class Decoder(nn.Module):
 
 class VariationalAutoencoder(nn.Module):
     """
-    Variational Autoencoder model consisting
-    of an encoder/decoder pair for which a
-    variational distribution is fitted to the
-    encoder.
+    Variational Autoencoder [Kingma 2013] model
+    consisting of an encoder/decoder pair for which
+    a variational distribution is fitted to the
+    encoder. Also known as the M1 model in [Kingma 2014].
 
-    :param dims (list (int)): Dimensions of the networks
-        given by the number of neurons on the form
-        [input_dim, [hidden_dims], latent_dim].
+    :param dims: Dimensions of the networks
     """
     def __init__(self, dims):
         super(VariationalAutoencoder, self).__init__()
@@ -92,6 +80,7 @@ class VariationalAutoencoder(nn.Module):
 
         self.encoder = Encoder([x_dim, h_dim, z_dim])
         self.decoder = Decoder([z_dim, list(reversed(h_dim)), x_dim])
+        self.kl_divergence = 0
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -99,23 +88,27 @@ class VariationalAutoencoder(nn.Module):
                 if m.bias is not None:
                     m.bias.data.zero_()
 
-    def _kl_divergence(self, z, param1, param2=None):
+    def _kld(self, z, q_param, p_param=None):
         """
-        Computes the KL-divergence of for
+        Computes the KL-divergence of
         some element z.
-        :param z:
-        :param param1:
-        :param param2:
-        :return:
+
+        KL(q||p) = -∫ q(z) log [ p(z) / q(z) ]
+                 = -E[log p(z) - log q(z)]
+
+        :param z: sample from q-distribuion
+        :param q_param: (mu, log_var) of the q-distribution
+        :param p_param: (mu, log_var) of the p-distribution
+        :return: KL(q||p)
         """
-        if param2 is None:
+        (mu, log_var) = q_param
+        qz = log_gaussian(z, mu, log_var)
+
+        if p_param is None:
             pz = log_standard_gaussian(z)
         else:
-            (mu, log_var) = param2
+            (mu, log_var) = p_param
             pz = log_gaussian(z, mu, log_var)
-
-        (mu, log_var) = param1
-        qz = log_gaussian(z, mu, log_var)
 
         kl = qz - pz
 
@@ -125,20 +118,18 @@ class VariationalAutoencoder(nn.Module):
         """
         Runs a data point through the model in order
         to provide its reconstruction and q distribution
-        parameters
+        parameters.
 
-        :param x (torch.autograd.Variable): input data
-        :return: (x_hat, latent) where latent is represented
-        by parameters of the z-distribution along with a
-        sample
+        :param x: input data
+        :return: reconstructed input
         """
         z, z_mu, z_log_var = self.encoder(x)
 
-        kl = self._kl_divergence(z, (z_mu, z_log_var))
+        self.kl_divergence = self._kld(z, (z_mu, z_log_var))
 
         x_mu = self.decoder(z)
 
-        return x_mu, kl
+        return x_mu
 
     def sample(self, z):
         """
@@ -170,19 +161,15 @@ class LadderEncoder(nn.Module):
     def forward(self, x):
         for linear, batch in zip(self.hidden, self.batchnorm):
             x = linear(x)
-            x = F.elu(batch(x))
+            x = F.leaky_relu(0.1, batch(x))
         return x, self.sample(x)
 
 
 class LadderVariationalAutoencoder(VariationalAutoencoder):
     """
     Ladder Variational Autoencoder as described by
-    Sønderby et al (2016). Adds several stochastic
+    [Sønderby 2016]. Adds several stochastic
     layers to improve the log-likelihood estimate.
-
-    :param dims (list (int)): Dimensions of the networks
-        given by the number of neurons on the form
-        [input_dim, [hidden_dims], [latent_dims]].
     """
     def __init__(self, dims):
         [x_dim, z_dim, h_dim] = dims
@@ -192,7 +179,7 @@ class LadderVariationalAutoencoder(VariationalAutoencoder):
         ladder_layers = [LadderEncoder([neurons[i-1], [neurons[i]], z_dim[i-1]]) for i in range(1, len(neurons))]
 
         self.encoder = nn.ModuleList(ladder_layers)
-        self.merge = [GaussianMerge(z_dim[len(z_dim)-i], z_dim[len(z_dim)-i-1]) for i in range(1, len(z_dim))]
+        self.merge = nn.ModuleList([GaussianMerge(z_dim[len(z_dim)-i], z_dim[len(z_dim)-i-1]) for i in range(1, len(z_dim))])
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -206,19 +193,21 @@ class LadderVariationalAutoencoder(VariationalAutoencoder):
         latents = []
         for encoder in self.encoder:
             x, (z, mu, log_var) = encoder(x)
-            latents.append((mu, log_var))
+            latents.append((z, mu, log_var))
 
-        kl = 0
+        self.kl_divergence = 0
         for i, latent in enumerate(reversed(latents)):
             # If at top, encoder == decoder,
             # use prior for KL.
             if i == 0:
-                kl += self._kl_divergence(z, latent)
+                _, q_mu, q_log_var = latent
+                self.kl_divergence += self._kld(z, (q_mu, q_log_var))
 
             # Perform downword merge of information.
             else:
-                z, mu, log_var = self.merge[i-1](z, *latent)
-                kl += self._kl_divergence(z, (mu, log_var), latent)
+                q_z, q_mu, q_log_var = latent
+                z, p_mu, p_log_var = self.merge[i-1](z, q_mu, q_log_var)
+                self.kl_divergence += self._kld(q_z, (q_mu, q_log_var), (p_mu, p_log_var))
 
         x_mu = self.decoder(z)
-        return x_mu, kl
+        return x_mu

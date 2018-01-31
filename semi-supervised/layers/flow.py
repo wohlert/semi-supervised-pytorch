@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 class PlanarNormalizingFlow(nn.Module):
     """
-    Planar normalizing flow as described by Rezende and Mohamed (2015).
+    Planar normalizing flow [Rezende & Mohamed 2015].
     Provides a tighter bound on the ELBO by giving more expressive
     power to the approximate distribution, such as by introducing
     covariance between terms.
@@ -41,7 +41,7 @@ class PlanarNormalizingFlow(nn.Module):
 
 class NormalizingFlows(nn.Module):
     """
-    Presents a sequence of flows as a torch.nn.Module.
+    Presents a sequence of normalizing flows as a torch.nn.Module.
     """
     def __init__(self, in_features, flow_type=PlanarNormalizingFlow, n_flows=1):
         super(NormalizingFlows, self).__init__()
