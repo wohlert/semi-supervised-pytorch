@@ -19,8 +19,8 @@ implemented in this library (achieved) versus their original counterparts (claim
 
 | Model              | Claimed accuracy | Achieved accuracy |
 | ------------------ | ---------------- | ----------------- |
-| Kingma 2014 (M2)   |           88.03% |               93% |
-| Maaløe 2016 (ADGM) |           99.04% |               ??% |
+| Kingma 2014 (M2)   |           88.03% |            93.24% |
+| Maaløe 2016 (ADGM) |           99.04% |            ??.??% |
 
 ## Conditional generation
 

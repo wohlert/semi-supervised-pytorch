@@ -4,34 +4,29 @@ import sys
 sys.path.append("../semi-supervised")
 
 cuda = torch.cuda.is_available()
-print("CUDA:", cuda)
-n_labels = 10
+fp16 = torch.backends.cudnn.enabled
+n_devices = torch.cuda.device_count()
+print("CUDA: {}, with fp16: {}. Number of devices: {}".format(cuda, fp16, n_devices))
 
 def binary_cross_entropy(r, x):
     "Drop in replacement until PyTorch adds `reduce` keyword."
     return -torch.sum(x * torch.log(r + 1e-8) + (1 - x) * torch.log(1 - r + 1e-8), dim=-1)
 
+n_labels = 3
 def get_mnist(location="./", batch_size=64, labels_per_class=100):
     from functools import reduce
     from operator import __or__
     from torch.utils.data.sampler import SubsetRandomSampler
     from torchvision.datasets import MNIST
     import torchvision.transforms as transforms
+    from utils import onehot
 
-    flatten_bernoulli = lambda img: transforms.ToTensor()(img).view(-1).bernoulli()
-
-    def one_hot(n):
-        def encode(label):
-            y = torch.zeros(n)
-            if label < n:
-                y[label] = 1
-            return y
-        return encode
+    flatten_bernoulli = lambda x: transforms.ToTensor()(x).view(-1).bernoulli()
 
     mnist_train = MNIST(location, train=True, download=True,
-                        transform=flatten_bernoulli, target_transform=one_hot(n_labels))
+                        transform=flatten_bernoulli, target_transform=onehot(n_labels))
     mnist_valid = MNIST(location, train=False, download=True,
-                        transform=flatten_bernoulli, target_transform=one_hot(n_labels))
+                        transform=flatten_bernoulli, target_transform=onehot(n_labels))
 
     def get_sampler(labels, n=None):
         # Only choose digits in n_labels
@@ -60,14 +55,14 @@ if __name__ == "__main__":
     from torch.autograd import Variable
     from inference import SVI, DeterministicWarmup, ImportanceWeightedSampler
 
-    labelled, unlabelled, validation = get_mnist(location="./", batch_size=64, labels_per_class=10)
+    labelled, unlabelled, validation = get_mnist(location="./", batch_size=5, labels_per_class=10)
     alpha = 0.1 * len(unlabelled) / len(labelled)
 
     models = []
 
     # Kingma 2014, M2 model. Reported: 88%, achieved: ??%
-    from models import DeepGenerativeModel
-    models += [DeepGenerativeModel([784, n_labels, 50, [600, 600]])]
+    # from models import DeepGenerativeModel
+    # models += [DeepGenerativeModel([784, n_labels, 50, [600, 600]])]
 
     # Maaløe 2016, ADGM model. Reported: 99.4%, achieved: ??%
     from models import AuxiliaryDeepGenerativeModel
@@ -76,21 +71,12 @@ if __name__ == "__main__":
     from models import LadderDeepGenerativeModel
     models += [LadderDeepGenerativeModel([784, n_labels, [64, 32, 16, 8, 4], [512, 256, 128, 64, 32]])]
 
-    from models import LadderDeepGenerativeModel2
-    models += [LadderDeepGenerativeModel2([784, n_labels, [64, 32, 16, 8, 4], [512, 256, 128, 64, 32]])]
-
-    from models import LadderDeepGenerativeModel3
-    models += [LadderDeepGenerativeModel3([784, n_labels, [64, 32, 16, 8, 4], [512, 256, 128, 64, 32]])]
-
     for model in models:
-        if cuda: model = model.cuda()
+        if cuda:
+            model = torch.nn.DataParallel(model).cuda() if n_devices > 1 else model.cuda()
 
-        if type(model) == DeepGenerativeModel:
-            beta = repeat(1)
-            sampler = ImportanceWeightedSampler(1, 1)
-        else:
-            beta = DeterministicWarmup()
-            sampler = ImportanceWeightedSampler(1, 5)
+        beta = DeterministicWarmup()
+        sampler = ImportanceWeightedSampler(2, 1)
 
         elbo = SVI(model, likelihood=binary_cross_entropy, beta=beta, sampler=sampler)
         optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, betas=(0.9, 0.999))
@@ -101,13 +87,15 @@ if __name__ == "__main__":
         file = open(model.__class__.__name__ + ".log", 'w+')
 
         for epoch in range(epochs):
+            model.train()
             total_loss, labelled_loss, unlabelled_loss, accuracy = (0, 0, 0, 0)
             for (x, y), (u, _) in zip(cycle(labelled), unlabelled):
                 # Wrap in variables
                 x, y, u = Variable(x), Variable(y), Variable(u)
 
                 if cuda:
-                    x, y, u = x.cuda(), y.cuda(), u.cuda()
+                    x, y = x.cuda(device=0), y.cuda(device=0)
+                    u = u.cuda(device=1, async=True) if n_devices > 1 else u.cuda(device=0, async=True)
 
                 L = -elbo(x, y)
                 U = -elbo(u)
@@ -134,6 +122,7 @@ if __name__ == "__main__":
             print(*(total_loss / m, labelled_loss / m, unlabelled_loss / m, accuracy / m), sep="\t", file=file)
 
             if epoch % 1 == 0:
+                model.eval()
                 print("Epoch: {}".format(epoch))
                 print("[Train]\t\t J_a: {:.2f}, L: {:.2f}, U: {:.2f}, accuracy: {:.2f}".format(total_loss / m,
                                                                                               labelled_loss / m,
@@ -145,7 +134,7 @@ if __name__ == "__main__":
                     x, y = Variable(x), Variable(y)
 
                     if cuda:
-                        x, y = x.cuda(), y.cuda()
+                        x, y = x.cuda(device=0), y.cuda(device=0)
 
                     L = -elbo(x, y)
                     U = -elbo(x)

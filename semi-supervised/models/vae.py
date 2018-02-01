@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import init
@@ -150,19 +151,22 @@ class LadderEncoder(nn.Module):
     def __init__(self, dims):
         super(LadderEncoder, self).__init__()
 
-        [x_dim, h_dim, z_dim] = dims
+        [x_dim, h_dim, self.z_dim, y_dim] = dims
         neurons = [x_dim, *h_dim]
         linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
 
         self.hidden = nn.ModuleList(linear_layers)
         self.batchnorm = nn.ModuleList([nn.BatchNorm1d(l.out_features) for l in self.hidden])
-        self.sample = GaussianSample(h_dim[-1], z_dim)
+        self.sample = GaussianSample(h_dim[-1]+y_dim, self.z_dim)
 
-    def forward(self, x):
+    def forward(self, x, y=None):
         for linear, batch in zip(self.hidden, self.batchnorm):
             x = linear(x)
-            x = F.leaky_relu(0.1, batch(x))
-        return x, self.sample(x)
+            x = F.leaky_relu(batch(x), 0.1)
+        if y is not None:
+            return x, self.sample(torch.cat([x, y], dim=1))
+        else:
+            return x, self.sample(x)
 
 
 class LadderVariationalAutoencoder(VariationalAutoencoder):

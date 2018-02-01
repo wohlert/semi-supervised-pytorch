@@ -35,12 +35,12 @@ def onehot(k):
     :param k: (int) length of vector
     :return: onehot function
     """
-    def hot_vector(label):
-        y = torch.LongTensor(k)
-        y.zero_()
-        y[label] = 1
+    def encode(label):
+        y = torch.zeros(k)
+        if label < k:
+            y[label] = 1
         return y
-    return hot_vector
+    return encode
 
 
 def log_sum_exp(tensor, dim=-1, sum_op=torch.sum):

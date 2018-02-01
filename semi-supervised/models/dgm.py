@@ -125,12 +125,12 @@ class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
         super(AuxiliaryDeepGenerativeModel, self).__init__([x_dim, y_dim, z_dim, h_dim])
 
         self.aux_encoder = Encoder([x_dim, h_dim, a_dim])
-        self.aux_decoder = Encoder([z_dim + y_dim, list(reversed(h_dim)), a_dim])
+        self.aux_decoder = Encoder([x_dim + z_dim + y_dim, list(reversed(h_dim)), a_dim])
 
         self.classifier = Classifier([x_dim + a_dim, h_dim[0], y_dim])
 
         self.encoder = Encoder([a_dim + y_dim + x_dim, h_dim, z_dim])
-        self.decoder = Decoder([a_dim + y_dim + z_dim, list(reversed(h_dim)), x_dim])
+        self.decoder = Decoder([y_dim + z_dim, list(reversed(h_dim)), x_dim])
 
     def classify(self, x):
         # Auxiliary inference q(a|x)
@@ -153,14 +153,14 @@ class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
         # Latent inference q(z|a,y,x)
         z, z_mu, z_log_var = self.encoder(torch.cat([q_a, x, y], dim=1))
 
-        # Generative p(a|z,y)
-        p_a, p_a_mu, p_a_log_var = self.aux_decoder(torch.cat([y, z], dim=1))
+        # Generative p(x|z,y)
+        x_mu = self.decoder(torch.cat([y, z], dim=1))
 
-        # Generative p(x|a,z,y)
-        x_mu = self.decoder(torch.cat([p_a, y, z], dim=1))
+        # Generative p(a|z,y,x)
+        p_a, p_a_mu, p_a_log_var = self.aux_decoder(torch.cat([x, y, z], dim=1))
 
-        a_kl = self.kld(q_a, (q_a_mu, q_a_log_var), (p_a_mu, p_a_log_var))
-        z_kl = self.kld(z, (z_mu, z_log_var))
+        a_kl = self._kld(q_a, (q_a_mu, q_a_log_var), (p_a_mu, p_a_log_var))
+        z_kl = self._kld(z, (z_mu, z_log_var))
 
         self.kl_divergence = a_kl + z_kl
 
@@ -181,12 +181,17 @@ class LadderDeepGenerativeModel(DeepGenerativeModel):
     """
     Semi-supervised ladder variational autoencoder.
     """
-    def __init__(self, dims):
+    def __init__(self, dims, config=2):
         [x_dim, y_dim, z_dim, h_dim] = dims
+        self.config = config
         super(LadderDeepGenerativeModel, self).__init__([x_dim, y_dim, z_dim[0], h_dim])
 
-        neurons = [x_dim + y_dim, *h_dim]
-        ladder_layers = [LadderEncoder([neurons[i - 1], [neurons[i]], z_dim[i - 1]]) for i in range(1, len(neurons))]
+        neurons = [x_dim, *h_dim]
+        ladder_layers = [LadderEncoder([neurons[i - 1], [neurons[i]], z_dim[i - 1], 0]) for i in range(1, len(neurons))]
+
+        if self.config == 0:
+            l = ladder_layers[0]
+            ladder_layers[0] = LadderEncoder([l.in_features, l.out_features, l.z_dim, y_dim])
 
         self.encoder = nn.ModuleList(ladder_layers)
         self.merge = nn.ModuleList(
@@ -199,12 +204,10 @@ class LadderDeepGenerativeModel(DeepGenerativeModel):
                     m.bias.data.zero_()
 
     def forward(self, x, y):
-        # Gather latent representation
-        # from encoders along with final z.
         latents = []
         for i, encoder in enumerate(self.encoder):
             if i == 0:
-                x, (z, mu, log_var) = encoder(torch.cat([x, y], dim=1))
+                x, (z, mu, log_var) = encoder(x, y)
             else:
                 x, (z, mu, log_var) = encoder(x)
             latents.append((z, mu, log_var))
@@ -213,115 +216,14 @@ class LadderDeepGenerativeModel(DeepGenerativeModel):
         for i, latent in enumerate(reversed(latents)):
             # If at top, encoder == decoder,
             # use prior for KL.
+            q_z, q_mu, q_log_var = latent
             if i == 0:
-                _, q_mu, q_log_var = latent
-                self.kl_divergence += self._kld(z, (q_mu, q_log_var))
+                self.kl_divergence += self._kld(q_z, (q_mu, q_log_var))
 
-            # Perform downward merge of information.
+            # Perform downword merge of information.
             else:
-                q_z, q_mu, q_log_var = latent
                 z, p_mu, p_log_var = self.merge[i - 1](z, q_mu, q_log_var )
                 self.kl_divergence += self._kld(q_z, (q_mu, q_log_var), (p_mu, p_log_var))
-
-        x_mu = self.decoder(torch.cat([z, y], dim=1))
-        return x_mu
-
-class LadderDeepGenerativeModel2(DeepGenerativeModel):
-    """
-    Semi-supervised ladder variational autoencoder.
-    """
-    def __init__(self, dims):
-        [x_dim, y_dim, z_dim, h_dim] = dims
-        super(LadderDeepGenerativeModel2, self).__init__([x_dim, y_dim, z_dim[0], h_dim])
-
-        neurons = [x_dim, *h_dim]
-        ladder_layers = [LadderEncoder([neurons[i - 1], [neurons[i]], z_dim[i - 1]]) for i in range(1, len(neurons))]
-
-        self.encoder = nn.ModuleList(ladder_layers)
-        self.merge = nn.ModuleList(
-            [GaussianMerge(z_dim[len(z_dim) - i], z_dim[len(z_dim) - i - 1]) for i in range(1, len(z_dim))])
-
-        self.merge[0] = GaussianMerge(z_dim[len(z_dim)-1] + self.y_dim, z_dim[len(z_dim) - 2])
-
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                init.xavier_normal(m.weight.data)
-                if m.bias is not None:
-                    m.bias.data.zero_()
-
-    def forward(self, x, y):
-        latents = []
-        for i, encoder in enumerate(self.encoder):
-            x, (z, mu, log_var) = encoder(x)
-            latents.append((z, mu, log_var))
-
-        self.kl_divergence = 0
-        for i, latent in enumerate(reversed(latents)):
-            # If at top, encoder == decoder,
-            # use prior for KL.
-            if i == 0:
-                _, q_mu, q_log_var = latent
-                self.kl_divergence += self._kld(z, (q_mu, q_log_var))
-
-            # Perform downword merge of information.
-            else:
-                q_z, q_mu, q_log_var = latent
-                if i == 1:
-                    z, p_mu, p_log_var = self.merge[i - 1](torch.cat([z, y], dim=1), q_mu, q_log_var )
-                else:
-                    z, p_mu, p_log_var = self.merge[i - 1](z, q_mu, q_log_var )
-                self.kl_divergence += self._kld(q_z, (q_mu, q_log_var), (p_mu, p_log_var))
-
-        x_mu = self.decoder(torch.cat([z, y], dim=1))
-        return x_mu
-
-
-class LadderDeepGenerativeModel3(DeepGenerativeModel):
-    """
-    Semi-supervised ladder variational autoencoder.
-    """
-    def __init__(self, dims):
-        [x_dim, y_dim, z_dim, h_dim] = dims
-        super(LadderDeepGenerativeModel3, self).__init__([x_dim, y_dim, z_dim[0], h_dim])
-
-        neurons = [x_dim, *h_dim]
-        ladder_layers = [LadderEncoder([neurons[i - 1], [neurons[i]], z_dim[i - 1]]) for i in range(1, len(neurons))]
-
-        self.encoder = nn.ModuleList(ladder_layers)
-        self.merge = nn.ModuleList(
-            [GaussianMerge(z_dim[len(z_dim) - i], z_dim[len(z_dim) - i - 1]) for i in range(1, len(z_dim))])
-
-        self.merge[1] = GaussianMerge(z_dim[len(z_dim)-2] + self.y_dim, z_dim[len(z_dim) - 3])
-
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                init.xavier_normal(m.weight.data)
-                if m.bias is not None:
-                    m.bias.data.zero_()
-
-    def forward(self, x, y=None):
-        latents = []
-        for i, encoder in enumerate(self.encoder):
-            x, (z, mu, log_var) = encoder(x)
-            latents.append((z, mu, log_var))
-
-        self.kl_divergence = 0
-        for i, latent in enumerate(reversed(latents)):
-            # If at top, encoder == decoder,
-            # use prior for KL.
-            if i == 0:
-                _, q_mu, q_log_var = latent
-                self.kl_divergence += self._kld(z, (q_mu, q_log_var))
-
-            # Perform downword merge of information.
-            else:
-                q_z, q_mu, q_log_var = latent
-                if i == 2:
-                    z, p_mu, p_log_var = self.merge[i - 1](torch.cat([z, y], dim=1), q_mu, q_log_var)
-                else:
-                    z, p_mu, p_log_var = self.merge[i - 1](z, q_mu, q_log_var)
-
-                    self.kl_divergence += self._kld(q_z, (q_mu, q_log_var), (p_mu, p_log_var))
 
         x_mu = self.decoder(torch.cat([z, y], dim=1))
         return x_mu

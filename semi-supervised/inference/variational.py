@@ -21,13 +21,16 @@ class ImportanceWeightedSampler(object):
         self.mc = mc
         self.iw = iw
 
-    def repeat(self, x):
+    def resample(self, x):
         return x.repeat(self.mc * self.iw, 1)
 
-    def __call__(self, elbo):
-        elbo = elbo.view(-1, self.mc, self.iw)
-        elbo = torch.mean(log_sum_exp(elbo, dim=2, sum_op=torch.mean), dim=1)
-        return elbo
+    def __call__(self, elbo, batch_size=1):
+        # Contiguous arrays are very slow
+        #elbo = elbo.unfold(0, batch_size, batch_size).permute(1, 0).contiguous()
+        #elbo = elbo.view(batch_size, -1, self.mc, self.iw)
+        elbo = elbo.view(self.mc, self.iw, -1)
+        elbo = torch.mean(log_sum_exp(elbo, dim=1, sum_op=torch.mean), dim=0)
+        return elbo.view(-1)
 
 
 class DeterministicWarmup(object):
@@ -74,15 +77,17 @@ class SVI(nn.Module):
     def forward(self, x, y=None):
         is_labelled = False if y is None else True
 
-        # Increase sampling dimension
-        xs = self.sampler.repeat(x)
+        # Prepare for sampling
+        xs, ys = (x, y)
 
         # Enumerate choices of label
         if not is_labelled:
             ys = enumerate_discrete(xs, self.model.y_dim)
             xs = xs.repeat(self.model.y_dim, 1)
-        else:
-            ys = self.sampler.repeat(y)
+
+        # Increase sampling dimension
+        xs = self.sampler.resample(xs)
+        ys = self.sampler.resample(ys)
 
         reconstruction = self.model(xs, ys)
 
@@ -94,18 +99,19 @@ class SVI(nn.Module):
 
         # Equivalent to -L(x, y)
         elbo = likelihood + prior - next(self.beta) * self.model.kl_divergence
-        L = self.sampler(elbo)
-        if not is_labelled:
-            logits = self.model.classify(x)
+        L = self.sampler(elbo, x.size(0))
 
-            L = L.view_as(logits.t()).t()
+        if is_labelled:
+            return torch.mean(L)
 
-            # Calculate entropy H(q(y|x)) and sum over all labels
-            H = -torch.sum(torch.mul(logits, torch.log(logits + 1e-8)), dim=-1)
-            L = torch.sum(torch.mul(logits, L), dim=-1)
+        logits = self.model.classify(x)
 
-            # Equivalent to -U(x)
-            U = L + H
-            return torch.mean(U)
+        L = L.view_as(logits.t()).t()
 
-        return torch.mean(L)
+        # Calculate entropy H(q(y|x)) and sum over all labels
+        H = -torch.sum(torch.mul(logits, torch.log(logits + 1e-8)), dim=-1)
+        L = torch.sum(torch.mul(logits, L), dim=-1)
+
+        # Equivalent to -U(x)
+        U = L + H
+        return torch.mean(U)
