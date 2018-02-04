@@ -24,10 +24,7 @@ class ImportanceWeightedSampler(object):
     def resample(self, x):
         return x.repeat(self.mc * self.iw, 1)
 
-    def __call__(self, elbo, batch_size=1):
-        # Contiguous arrays are very slow
-        #elbo = elbo.unfold(0, batch_size, batch_size).permute(1, 0).contiguous()
-        #elbo = elbo.view(batch_size, -1, self.mc, self.iw)
+    def __call__(self, elbo):
         elbo = elbo.view(self.mc, self.iw, -1)
         elbo = torch.mean(log_sum_exp(elbo, dim=1, sum_op=torch.mean), dim=0)
         return elbo.view(-1)
@@ -38,20 +35,18 @@ class DeterministicWarmup(object):
     Linear deterministic warm-up as described in
     [Sønderby 2016].
     """
-    def __init__(self, init=0, end=1, inc=0.01):
-        self.t = init
-        self.end = end
-        self.inc = inc
+    def __init__(self, n=100):
+        self.t = 0
+        self.inc = 1/n
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        if self.t > self.end:
-            return self.end
-        else:
-            self.t += self.inc
-            return self.t
+        t = self.t + self.inc
+
+        self.t = 1 if t > 1 else t
+        return self.t
 
 
 class SVI(nn.Module):
@@ -99,7 +94,7 @@ class SVI(nn.Module):
 
         # Equivalent to -L(x, y)
         elbo = likelihood + prior - next(self.beta) * self.model.kl_divergence
-        L = self.sampler(elbo, x.size(0))
+        L = self.sampler(elbo)
 
         if is_labelled:
             return torch.mean(L)

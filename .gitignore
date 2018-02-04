@@ -5,3 +5,5 @@ processed
 .DS_Store
 .ipynb_checkpoints
 mldata
+.pt
+.log

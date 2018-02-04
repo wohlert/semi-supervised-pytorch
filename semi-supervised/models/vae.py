@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 from torch.nn import init
 
 from layers import GaussianSample, GaussianMerge
@@ -52,11 +53,13 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
 
         [z_dim, h_dim, x_dim] = dims
+
         neurons = [z_dim, *h_dim]
         linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
-
         self.hidden = nn.ModuleList(linear_layers)
+
         self.reconstruction = nn.Linear(h_dim[-1], x_dim)
+
         self.output_activation = nn.Sigmoid()
 
     def forward(self, x):
@@ -145,28 +148,58 @@ class VariationalAutoencoder(nn.Module):
 class LadderEncoder(nn.Module):
     """
     The ladder encoder differs from the standard encoder
-    by using batch-normalization and ELU activation.
+    by using batch-normalization and LReLU activation.
     Additionally, it also returns the transformation x.
     """
     def __init__(self, dims):
         super(LadderEncoder, self).__init__()
+        [x_dim, h_dim, self.z_dim] = dims
 
-        [x_dim, h_dim, self.z_dim, y_dim] = dims
-        neurons = [x_dim, *h_dim]
-        linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
+        self.linear = nn.Linear(x_dim, h_dim)
+        self.batchnorm = nn.BatchNorm1d(h_dim)
+        self.sample = GaussianSample(h_dim, self.z_dim)
 
-        self.hidden = nn.ModuleList(linear_layers)
-        self.batchnorm = nn.ModuleList([nn.BatchNorm1d(l.out_features) for l in self.hidden])
-        self.sample = GaussianSample(h_dim[-1]+y_dim, self.z_dim)
+    def forward(self, x):
+        x = self.linear(x)
+        x = F.leaky_relu(self.batchnorm(x), 0.1)
+        return x, self.sample(x)
 
-    def forward(self, x, y=None):
-        for linear, batch in zip(self.hidden, self.batchnorm):
-            x = linear(x)
-            x = F.leaky_relu(batch(x), 0.1)
-        if y is not None:
-            return x, self.sample(torch.cat([x, y], dim=1))
-        else:
-            return x, self.sample(x)
+
+class LadderDecoder(nn.Module):
+    """
+    The ladder dencoder differs from the standard encoder
+    by using batch-normalization and LReLU activation.
+    Additionally, it also returns the transformation x.
+    """
+    def __init__(self, dims):
+        super(LadderDecoder, self).__init__()
+
+        [x_dim, h_dim, self.z_dim] = dims
+
+        self.linear1 = nn.Linear(x_dim, h_dim)
+        self.batchnorm1 = nn.BatchNorm1d(h_dim)
+        self.merge = GaussianMerge(h_dim, self.z_dim)
+
+        self.linear2 = nn.Linear(x_dim, h_dim)
+        self.batchnorm2 = nn.BatchNorm1d(h_dim)
+        self.sample = GaussianSample(h_dim, self.z_dim)
+
+    def forward(self, x, l_mu=None, l_log_var=None):
+        if l_mu is not None:
+            # Sample from this encoder layer and merge
+            z = self.linear1(x)
+            z = F.leaky_relu(self.batchnorm1(z), 0.1)
+            q_z, q_mu, q_log_var = self.merge(z, l_mu, l_log_var)
+
+        # Sample from the decoder and send forward
+        z = self.linear2(x)
+        z = F.leaky_relu(self.batchnorm2(z), 0.1)
+        z, p_mu, p_log_var = self.sample(z)
+
+        if l_mu is None:
+            return z
+
+        return z, (q_z, (q_mu, q_log_var), (p_mu, p_log_var))
 
 
 class LadderVariationalAutoencoder(VariationalAutoencoder):
@@ -180,10 +213,14 @@ class LadderVariationalAutoencoder(VariationalAutoencoder):
         super(LadderVariationalAutoencoder, self).__init__([x_dim, z_dim[0], h_dim])
 
         neurons = [x_dim, *h_dim]
-        ladder_layers = [LadderEncoder([neurons[i-1], [neurons[i]], z_dim[i-1]]) for i in range(1, len(neurons))]
+        encoder_layers = [LadderEncoder([neurons[i - 1], neurons[i], z_dim[i - 1]]) for i in range(1, len(neurons))]
 
-        self.encoder = nn.ModuleList(ladder_layers)
-        self.merge = nn.ModuleList([GaussianMerge(z_dim[len(z_dim)-i], z_dim[len(z_dim)-i-1]) for i in range(1, len(z_dim))])
+        decoder_layers = [LadderDecoder([z_dim[1], h_dim[0], z_dim[0]])]
+        decoder_layers = [LadderDecoder([z_dim[i], h_dim[i-1], z_dim[i-1]]) for i in range(1, len(h_dim))][::-1]
+
+        self.encoder = nn.ModuleList(encoder_layers)
+        self.decoder = nn.ModuleList(decoder_layers)
+        self.reconstruction = Decoder([z_dim[0], h_dim, x_dim])
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -197,21 +234,27 @@ class LadderVariationalAutoencoder(VariationalAutoencoder):
         latents = []
         for encoder in self.encoder:
             x, (z, mu, log_var) = encoder(x)
-            latents.append((z, mu, log_var))
+            latents.append((mu, log_var))
+
+        latents = list(reversed(latents))
 
         self.kl_divergence = 0
-        for i, latent in enumerate(reversed(latents)):
+        for i, decoder in enumerate([-1, *self.decoder]):
             # If at top, encoder == decoder,
             # use prior for KL.
+            l_mu, l_log_var = latents[i]
             if i == 0:
-                _, q_mu, q_log_var = latent
-                self.kl_divergence += self._kld(z, (q_mu, q_log_var))
+                self.kl_divergence += self._kld(z, (l_mu, l_log_var))
 
             # Perform downword merge of information.
             else:
-                q_z, q_mu, q_log_var = latent
-                z, p_mu, p_log_var = self.merge[i-1](z, q_mu, q_log_var)
-                self.kl_divergence += self._kld(q_z, (q_mu, q_log_var), (p_mu, p_log_var))
+                z, kl = decoder(z, l_mu, l_log_var)
+                self.kl_divergence += self._kld(*kl)
 
-        x_mu = self.decoder(z)
+        x_mu = self.reconstruction(z)
         return x_mu
+
+    def sample(self, z):
+        for decoder in self.decoder:
+            z = decoder(z)
+        return self.reconstruction(z)

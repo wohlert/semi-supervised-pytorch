@@ -22,7 +22,7 @@ class Stochastic(nn.Module):
         std = log_var.mul(0.5).exp_()
 
         # z = std * epsilon + mu
-        z = mu.addcmul_(std, epsilon)
+        z = mu.addcmul(std, epsilon)
 
         return z
 
@@ -60,12 +60,12 @@ class GaussianMerge(GaussianSample):
     def forward(self, z, mu1, log_var1):
         # Calculate precision of each distribution
         # (inverse variance)
+        mu2 = self.mu(z)
         log_var2 = F.softplus(self.log_var(z))
         precision1, precision2 = (1/torch.exp(log_var1), 1/torch.exp(log_var2))
 
         # Merge distributions into a single new
         # distribution
-        mu2 = self.mu(z)
         mu = ((mu1 * precision1) + (mu2 * precision2)) / (precision1 + precision2)
 
         var = 1 / (precision1 + precision2)

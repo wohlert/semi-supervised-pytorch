@@ -82,7 +82,7 @@ class DeepGenerativeModel(VariationalAutoencoder):
 
 class StackedDeepGenerativeModel(DeepGenerativeModel):
     """
-    M1+M2 model as described in Kingma 2014.
+    M1+M2 model as described in [Kingma 2014].
     """
     def __init__(self, dims, features):
         """
@@ -154,7 +154,7 @@ class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
         z, z_mu, z_log_var = self.encoder(torch.cat([q_a, x, y], dim=1))
 
         # Generative p(x|z,y)
-        x_mu = self.decoder(torch.cat([y, z], dim=1))
+        x_mu = self.decoder(torch.cat([z, y], dim=1))
 
         # Generative p(a|z,y,x)
         p_a, p_a_mu, p_a_log_var = self.aux_decoder(torch.cat([x, y, z], dim=1))
@@ -166,34 +166,20 @@ class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
 
         return x_mu
 
-    def sample(self, z, a, y):
-        """
-        Samples from the Decoder to generate an x.
-        :param z: latent normal variable
-        :param a: auxiliary normal variable
-        :param y: label
-        :return: x
-        """
-        return super(AuxiliaryDeepGenerativeModel, self).sample(torch.cat([a, z], dim=1), y)
-
 
 class LadderDeepGenerativeModel(DeepGenerativeModel):
     """
     Semi-supervised ladder variational autoencoder.
     """
-    def __init__(self, dims, config=2):
+    def __init__(self, dims):
         [x_dim, y_dim, z_dim, h_dim] = dims
-        self.config = config
         super(LadderDeepGenerativeModel, self).__init__([x_dim, y_dim, z_dim[0], h_dim])
 
-        neurons = [x_dim, *h_dim]
-        ladder_layers = [LadderEncoder([neurons[i - 1], [neurons[i]], z_dim[i - 1], 0]) for i in range(1, len(neurons))]
+        ladder1 = LadderEncoder([x_dim, [h_dim[0]], z_dim[0], 0])
+        ladder2 = LadderEncoder([h_dim[0], [h_dim[1]], z_dim[1], 0])
+        ladder3 = LadderEncoder([h_dim[1], [h_dim[2]], z_dim[2], y_dim])
 
-        if self.config == 0:
-            l = ladder_layers[0]
-            ladder_layers[0] = LadderEncoder([l.in_features, l.out_features, l.z_dim, y_dim])
-
-        self.encoder = nn.ModuleList(ladder_layers)
+        self.encoder = nn.ModuleList([ladder1, ladder2, ladder3])
         self.merge = nn.ModuleList(
             [GaussianMerge(z_dim[len(z_dim) - i], z_dim[len(z_dim) - i - 1]) for i in range(1, len(z_dim))])
 
@@ -206,7 +192,7 @@ class LadderDeepGenerativeModel(DeepGenerativeModel):
     def forward(self, x, y):
         latents = []
         for i, encoder in enumerate(self.encoder):
-            if i == 0:
+            if i == len(self.encoder)-1:
                 x, (z, mu, log_var) = encoder(x, y)
             else:
                 x, (z, mu, log_var) = encoder(x)
