@@ -4,8 +4,7 @@ import torch.nn.functional as F
 from torch.nn import init
 
 from .vae import VariationalAutoencoder
-from .vae import Encoder, Decoder, LadderEncoder
-from layers import GaussianMerge
+from .vae import Encoder, Decoder, LadderEncoder, LadderDecoder
 
 
 class Classifier(nn.Module):
@@ -137,7 +136,7 @@ class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
         a, a_mu, a_log_var = self.aux_encoder(x)
 
         # Classification q(y|a,x)
-        logits = self.classifier(torch.cat([a, x], dim=1))
+        logits = self.classifier(torch.cat([x, a], dim=1))
         return logits
 
     def forward(self, x, y):
@@ -151,7 +150,7 @@ class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
         q_a, q_a_mu, q_a_log_var = self.aux_encoder(x)
 
         # Latent inference q(z|a,y,x)
-        z, z_mu, z_log_var = self.encoder(torch.cat([q_a, x, y], dim=1))
+        z, z_mu, z_log_var = self.encoder(torch.cat([x, y, q_a], dim=1))
 
         # Generative p(x|z,y)
         x_mu = self.decoder(torch.cat([z, y], dim=1))
@@ -169,19 +168,24 @@ class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
 
 class LadderDeepGenerativeModel(DeepGenerativeModel):
     """
-    Semi-supervised ladder variational autoencoder.
     """
     def __init__(self, dims):
         [x_dim, y_dim, z_dim, h_dim] = dims
         super(LadderDeepGenerativeModel, self).__init__([x_dim, y_dim, z_dim[0], h_dim])
 
-        ladder1 = LadderEncoder([x_dim, [h_dim[0]], z_dim[0], 0])
-        ladder2 = LadderEncoder([h_dim[0], [h_dim[1]], z_dim[1], 0])
-        ladder3 = LadderEncoder([h_dim[1], [h_dim[2]], z_dim[2], y_dim])
+        neurons = [x_dim, *h_dim]
+        encoder_layers = [LadderEncoder([neurons[i - 1], neurons[i], z_dim[i - 1]]) for i in range(1, len(neurons))]
 
-        self.encoder = nn.ModuleList([ladder1, ladder2, ladder3])
-        self.merge = nn.ModuleList(
-            [GaussianMerge(z_dim[len(z_dim) - i], z_dim[len(z_dim) - i - 1]) for i in range(1, len(z_dim))])
+        e = encoder_layers[-1]
+        encoder_layers[-1] = LadderEncoder([e.in_features + y_dim, e.out_features, e.z_dim])
+
+        decoder_layers = [LadderDecoder([z_dim[i], h_dim[i - 1], z_dim[i - 1]]) for i in range(1, len(h_dim))][::-1]
+
+        self.classifier = Classifier([x_dim, h_dim[0], y_dim])
+
+        self.encoder = nn.ModuleList(encoder_layers)
+        self.decoder = nn.ModuleList(decoder_layers)
+        self.reconstruction = Decoder([z_dim[0]+y_dim, h_dim, x_dim])
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -190,26 +194,35 @@ class LadderDeepGenerativeModel(DeepGenerativeModel):
                     m.bias.data.zero_()
 
     def forward(self, x, y):
+        # Gather latent representation
+        # from encoders along with final z.
         latents = []
         for i, encoder in enumerate(self.encoder):
             if i == len(self.encoder)-1:
-                x, (z, mu, log_var) = encoder(x, y)
+                x, (z, mu, log_var) = encoder(torch.cat([x, y], dim=1))
             else:
                 x, (z, mu, log_var) = encoder(x)
-            latents.append((z, mu, log_var))
+            latents.append((mu, log_var))
+
+        latents = list(reversed(latents))
 
         self.kl_divergence = 0
-        for i, latent in enumerate(reversed(latents)):
+        for i, decoder in enumerate([-1, *self.decoder]):
             # If at top, encoder == decoder,
             # use prior for KL.
-            q_z, q_mu, q_log_var = latent
+            l_mu, l_log_var = latents[i]
             if i == 0:
-                self.kl_divergence += self._kld(q_z, (q_mu, q_log_var))
+                self.kl_divergence += self._kld(z, (l_mu, l_log_var))
 
             # Perform downword merge of information.
             else:
-                z, p_mu, p_log_var = self.merge[i - 1](z, q_mu, q_log_var )
-                self.kl_divergence += self._kld(q_z, (q_mu, q_log_var), (p_mu, p_log_var))
+                z, kl = decoder(z, l_mu, l_log_var)
+                self.kl_divergence += self._kld(*kl)
 
-        x_mu = self.decoder(torch.cat([z, y], dim=1))
+        x_mu = self.reconstruction(torch.cat([z, y], dim=1))
         return x_mu
+
+    def sample(self, z, y):
+        for i, decoder in enumerate(self.decoder):
+            z = decoder(z)
+        return self.reconstruction(torch.cat([z, y]))

@@ -154,6 +154,8 @@ class LadderEncoder(nn.Module):
     def __init__(self, dims):
         super(LadderEncoder, self).__init__()
         [x_dim, h_dim, self.z_dim] = dims
+        self.in_features = x_dim
+        self.out_features = h_dim
 
         self.linear = nn.Linear(x_dim, h_dim)
         self.batchnorm = nn.BatchNorm1d(h_dim)
@@ -214,9 +216,7 @@ class LadderVariationalAutoencoder(VariationalAutoencoder):
 
         neurons = [x_dim, *h_dim]
         encoder_layers = [LadderEncoder([neurons[i - 1], neurons[i], z_dim[i - 1]]) for i in range(1, len(neurons))]
-
-        decoder_layers = [LadderDecoder([z_dim[1], h_dim[0], z_dim[0]])]
-        decoder_layers = [LadderDecoder([z_dim[i], h_dim[i-1], z_dim[i-1]]) for i in range(1, len(h_dim))][::-1]
+        decoder_layers = [LadderDecoder([z_dim[i], h_dim[i - 1], z_dim[i - 1]]) for i in range(1, len(h_dim))][::-1]
 
         self.encoder = nn.ModuleList(encoder_layers)
         self.decoder = nn.ModuleList(decoder_layers)

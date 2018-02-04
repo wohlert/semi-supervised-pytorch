@@ -3,16 +3,17 @@ import numpy as np
 import sys
 sys.path.append("../semi-supervised")
 
+torch.manual_seed(1337)
+np.random.seed(1337)
+
 cuda = torch.cuda.is_available()
-fp16 = torch.backends.cudnn.enabled
-n_devices = torch.cuda.device_count()
-print("CUDA: {}, with fp16: {}. Number of devices: {}".format(cuda, fp16, n_devices))
+print("CUDA: {}".format(cuda))
 
 def binary_cross_entropy(r, x):
     "Drop in replacement until PyTorch adds `reduce` keyword."
     return -torch.sum(x * torch.log(r + 1e-8) + (1 - x) * torch.log(1 - r + 1e-8), dim=-1)
 
-n_labels = 3
+n_labels = 10
 def get_mnist(location="./", batch_size=64, labels_per_class=100):
     from functools import reduce
     from operator import __or__
@@ -55,7 +56,7 @@ if __name__ == "__main__":
     from torch.autograd import Variable
     from inference import SVI, DeterministicWarmup, ImportanceWeightedSampler
 
-    labelled, unlabelled, validation = get_mnist(location="./", batch_size=5, labels_per_class=10)
+    labelled, unlabelled, validation = get_mnist(location="./", batch_size=100, labels_per_class=10)
     alpha = 0.1 * len(unlabelled) / len(labelled)
 
     models = []
@@ -65,18 +66,17 @@ if __name__ == "__main__":
     # models += [DeepGenerativeModel([784, n_labels, 50, [600, 600]])]
 
     # Maaløe 2016, ADGM model. Reported: 99.4%, achieved: ??%
-    from models import AuxiliaryDeepGenerativeModel
-    models += [AuxiliaryDeepGenerativeModel([784, n_labels, 100, 100, [500, 500]])]
+    # from models import AuxiliaryDeepGenerativeModel
+    # models += [AuxiliaryDeepGenerativeModel([784, n_labels, 100, 100, [500, 500]])]
 
     from models import LadderDeepGenerativeModel
-    models += [LadderDeepGenerativeModel([784, n_labels, [64, 32, 16, 8, 4], [512, 256, 128, 64, 32]])]
+    models += [LadderDeepGenerativeModel([784, n_labels, [32, 16, 8], [128, 128, 128]])]
 
     for model in models:
-        if cuda:
-            model = torch.nn.DataParallel(model).cuda() if n_devices > 1 else model.cuda()
+        if cuda: model = model.cuda()
 
-        beta = DeterministicWarmup()
-        sampler = ImportanceWeightedSampler(2, 1)
+        beta = DeterministicWarmup(n=4*len(unlabelled)*100)
+        sampler = ImportanceWeightedSampler(mc=1, iw=1)
 
         elbo = SVI(model, likelihood=binary_cross_entropy, beta=beta, sampler=sampler)
         optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, betas=(0.9, 0.999))
@@ -94,8 +94,9 @@ if __name__ == "__main__":
                 x, y, u = Variable(x), Variable(y), Variable(u)
 
                 if cuda:
+                    # They need to be on the same device and be synchronized.
                     x, y = x.cuda(device=0), y.cuda(device=0)
-                    u = u.cuda(device=1, async=True) if n_devices > 1 else u.cuda(device=0, async=True)
+                    u = u.cuda(device=0)
 
                 L = -elbo(x, y)
                 U = -elbo(u)
@@ -140,9 +141,9 @@ if __name__ == "__main__":
                     U = -elbo(x)
 
                     logits = model.classify(x)
-                    classication_loss = torch.sum(y * torch.log(logits + 1e-8), dim=1).mean()
+                    classication_loss = -torch.sum(y * torch.log(logits + 1e-8), dim=1).mean()
 
-                    J_alpha = L - alpha * classication_loss + U
+                    J_alpha = L + alpha * classication_loss + U
 
                     total_loss += J_alpha.data[0]
                     labelled_loss += L.data[0]
