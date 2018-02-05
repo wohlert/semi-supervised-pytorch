@@ -225,4 +225,4 @@ class LadderDeepGenerativeModel(DeepGenerativeModel):
     def sample(self, z, y):
         for i, decoder in enumerate(self.decoder):
             z = decoder(z)
-        return self.reconstruction(torch.cat([z, y]))
+        return self.reconstruction(torch.cat([z, y], dim=1))

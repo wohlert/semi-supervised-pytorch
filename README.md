@@ -1,7 +1,5 @@
 # Semi-supervised PyTorch
 
-**Update January 29th 2018: Several methods have been added now, which will be validated in the coming week.**
-
 A PyTorch-based package containing useful models for modern deep semi-supervised learning and deep generative models.
 
 ## What is semi-supervised learning?
@@ -13,14 +11,7 @@ Semi-supervised learning can typically be applied to areas where data is easy to
 Normally, one would either use an unsupervised method, or just the few labelled examples - both of which would be
 likely to yield bad results.
 
-The current state-of-the-art method in semi-supervised learning achieves an accuracy of over 99% on the MNIST dataset
-using just **10 labelled examples** from each class. The table below shows a comparison in accuracy between the models
-implemented in this library (achieved) versus their original counterparts (claimed) on MNIST.
-
-| Model              | Claimed accuracy | Achieved accuracy |
-| ------------------ | ---------------- | ----------------- |
-| Kingma 2014 (M2)   |           88.03% |            93.24% |
-| Maaløe 2016 (ADGM) |           99.04% |            95.46% |
+The current state-of-the-art method in semi-supervised learning achieves an accuracy of over 99% on the MNIST dataset using just **10 labelled examples per class**.
 
 ## Conditional generation
 
