@@ -8,11 +8,11 @@ from .vae import Encoder, Decoder, LadderEncoder, LadderDecoder
 
 
 class Classifier(nn.Module):
-    """
-    Single hidden layer classifier
-    with softmax output.
-    """
     def __init__(self, dims):
+        """
+        Single hidden layer classifier
+        with softmax output.
+        """
         super(Classifier, self).__init__()
         [x_dim, h_dim, y_dim] = dims
         self.dense = nn.Linear(x_dim, h_dim)
@@ -25,17 +25,16 @@ class Classifier(nn.Module):
 
 
 class DeepGenerativeModel(VariationalAutoencoder):
-    """
-    M2 code replication from the paper
-    'Semi-Supervised Learning with Deep Generative Models'
-    (Kingma 2014) in PyTorch.
-
-    The "Generative semi-supervised model" is a probabilistic
-    model that incorporates label information in both
-    inference and generation.
-    """
     def __init__(self, dims):
         """
+        M2 code replication from the paper
+        'Semi-Supervised Learning with Deep Generative Models'
+        (Kingma 2014) in PyTorch.
+
+        The "Generative semi-supervised model" is a probabilistic
+        model that incorporates label information in both
+        inference and generation.
+
         Initialise a new generative model
         :param dims: dimensions of x, y, z and hidden layers.
         """
@@ -80,11 +79,10 @@ class DeepGenerativeModel(VariationalAutoencoder):
 
 
 class StackedDeepGenerativeModel(DeepGenerativeModel):
-    """
-    M1+M2 model as described in [Kingma 2014].
-    """
     def __init__(self, dims, features):
         """
+        M1+M2 model as described in [Kingma 2014].
+
         Initialise a new stacked generative model
         :param dims: dimensions of x, y, z and hidden layers
         :param features: a pretrained M1 model of class `VariationalAutoencoder`
@@ -111,15 +109,21 @@ class StackedDeepGenerativeModel(DeepGenerativeModel):
         # Use the sample as new input to M2
         return super(StackedDeepGenerativeModel, self).forward(x_sample, y)
 
+    def classify(self, x):
+        _, x, _ = self.features.encoder(x)
+        logits = self.classifier(x)
+        return logits
 
 class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
-    """
-    Auxiliary Deep Generative Models [Maaløe 2016]
-    code replication. The ADGM introduces an additional
-    latent variable 'a', which enables the model to fit
-    more complex variational distributions.
-    """
     def __init__(self, dims):
+        """
+        Auxiliary Deep Generative Models [Maaløe 2016]
+        code replication. The ADGM introduces an additional
+        latent variable 'a', which enables the model to fit
+        more complex variational distributions.
+
+        :param dims: dimensions of x, y, z, a and hidden layers.
+        """
         [x_dim, y_dim, z_dim, a_dim, h_dim] = dims
         super(AuxiliaryDeepGenerativeModel, self).__init__([x_dim, y_dim, z_dim, h_dim])
 
@@ -167,9 +171,16 @@ class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
 
 
 class LadderDeepGenerativeModel(DeepGenerativeModel):
-    """
-    """
     def __init__(self, dims):
+        """
+        Ladder version of the Deep Generative Model.
+        Uses a hierarchical representation that is
+        trained end-to-end to give very nice disentangled
+        representations.
+
+        :param dims: dimensions of x, y, z layers and h layers
+            note that len(z) == len(h).
+        """
         [x_dim, y_dim, z_dim, h_dim] = dims
         super(LadderDeepGenerativeModel, self).__init__([x_dim, y_dim, z_dim[0], h_dim])
 
@@ -179,7 +190,7 @@ class LadderDeepGenerativeModel(DeepGenerativeModel):
         e = encoder_layers[-1]
         encoder_layers[-1] = LadderEncoder([e.in_features + y_dim, e.out_features, e.z_dim])
 
-        decoder_layers = [LadderDecoder([z_dim[i], h_dim[i - 1], z_dim[i - 1]]) for i in range(1, len(h_dim))][::-1]
+        decoder_layers = [LadderDecoder([z_dim[i - 1], h_dim[i - 1], z_dim[i]]) for i in range(1, len(h_dim))][::-1]
 
         self.classifier = Classifier([x_dim, h_dim[0], y_dim])
 

@@ -9,19 +9,19 @@ from inference import log_gaussian, log_standard_gaussian
 
 
 class Encoder(nn.Module):
-    """
-    Inference network
-
-    Attempts to infer the probability distribution
-    p(z|x) from the data by fitting a variational
-    distribution q_φ(z|x). Returns the two parameters
-    of the distribution (µ, log σ²).
-
-    :param dims: Dimensions of the networks
-        given by the number of neurons on the form
-        [input_dim, [hidden_dims], latent_dim].
-    """
     def __init__(self, dims):
+        """
+        Inference network
+
+        Attempts to infer the probability distribution
+        p(z|x) from the data by fitting a variational
+        distribution q_φ(z|x). Returns the two parameters
+        of the distribution (µ, log σ²).
+
+        :param dims: dimensions of the networks
+           given by the number of neurons on the form
+           [input_dim, [hidden_dims], latent_dim].
+        """
         super(Encoder, self).__init__()
 
         [x_dim, h_dim, z_dim] = dims
@@ -38,18 +38,18 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    """
-    Generative network
-
-    Generates samples from the original distribution
-    p(x) by transforming a latent representation, e.g.
-    by finding p_θ(x|z).
-
-    :param dims: Dimensions of the networks
-        given by the number of neurons on the form
-        [latent_dim, [hidden_dims], input_dim].
-    """
     def __init__(self, dims):
+        """
+        Generative network
+
+        Generates samples from the original distribution
+        p(x) by transforming a latent representation, e.g.
+        by finding p_θ(x|z).
+
+        :param dims: dimensions of the networks
+            given by the number of neurons on the form
+            [latent_dim, [hidden_dims], input_dim].
+        """
         super(Decoder, self).__init__()
 
         [z_dim, h_dim, x_dim] = dims
@@ -69,18 +69,20 @@ class Decoder(nn.Module):
 
 
 class VariationalAutoencoder(nn.Module):
-    """
-    Variational Autoencoder [Kingma 2013] model
-    consisting of an encoder/decoder pair for which
-    a variational distribution is fitted to the
-    encoder. Also known as the M1 model in [Kingma 2014].
-
-    :param dims: Dimensions of the networks
-    """
     def __init__(self, dims):
+        """
+        Variational Autoencoder [Kingma 2013] model
+        consisting of an encoder/decoder pair for which
+        a variational distribution is fitted to the
+        encoder. Also known as the M1 model in [Kingma 2014].
+
+        :param dims: x, z and hidden dimensions of the networks
+        """
         super(VariationalAutoencoder, self).__init__()
 
         [x_dim, z_dim, h_dim] = dims
+        self.z_dim = z_dim
+        self.flow = None
 
         self.encoder = Encoder([x_dim, h_dim, z_dim])
         self.decoder = Decoder([z_dim, list(reversed(h_dim)), x_dim])
@@ -106,7 +108,13 @@ class VariationalAutoencoder(nn.Module):
         :return: KL(q||p)
         """
         (mu, log_var) = q_param
-        qz = log_gaussian(z, mu, log_var)
+
+        if self.flow is not None:
+            f_z, log_det_z = self.flow(z)
+            qz = log_gaussian(z, mu, log_var) - sum(log_det_z)
+            z = f_z
+        else:
+            qz = log_gaussian(z, mu, log_var)
 
         if p_param is None:
             pz = log_standard_gaussian(z)
@@ -117,6 +125,9 @@ class VariationalAutoencoder(nn.Module):
         kl = qz - pz
 
         return kl
+
+    def add_flow(self, flow):
+        self.flow = flow
 
     def forward(self, x, y=None):
         """
@@ -146,12 +157,14 @@ class VariationalAutoencoder(nn.Module):
 
 
 class LadderEncoder(nn.Module):
-    """
-    The ladder encoder differs from the standard encoder
-    by using batch-normalization and LReLU activation.
-    Additionally, it also returns the transformation x.
-    """
     def __init__(self, dims):
+        """
+        The ladder encoder differs from the standard encoder
+        by using batch-normalization and LReLU activation.
+        Additionally, it also returns the transformation x.
+
+        :param dims: dimensions [input_dim, [hidden_dims], [latent_dims]].
+        """
         super(LadderEncoder, self).__init__()
         [x_dim, h_dim, self.z_dim] = dims
         self.in_features = x_dim
@@ -168,15 +181,19 @@ class LadderEncoder(nn.Module):
 
 
 class LadderDecoder(nn.Module):
-    """
-    The ladder dencoder differs from the standard encoder
-    by using batch-normalization and LReLU activation.
-    Additionally, it also returns the transformation x.
-    """
     def __init__(self, dims):
+        """
+        The ladder dencoder differs from the standard encoder
+        by using batch-normalization and LReLU activation.
+        Additionally, it also returns the transformation x.
+
+        :param dims: dimensions of the networks
+            given by the number of neurons on the form
+            [latent_dim, [hidden_dims], input_dim].
+        """
         super(LadderDecoder, self).__init__()
 
-        [x_dim, h_dim, self.z_dim] = dims
+        [self.z_dim, h_dim, x_dim] = dims
 
         self.linear1 = nn.Linear(x_dim, h_dim)
         self.batchnorm1 = nn.BatchNorm1d(h_dim)
@@ -205,18 +222,20 @@ class LadderDecoder(nn.Module):
 
 
 class LadderVariationalAutoencoder(VariationalAutoencoder):
-    """
-    Ladder Variational Autoencoder as described by
-    [Sønderby 2016]. Adds several stochastic
-    layers to improve the log-likelihood estimate.
-    """
     def __init__(self, dims):
+        """
+        Ladder Variational Autoencoder as described by
+        [Sønderby 2016]. Adds several stochastic
+        layers to improve the log-likelihood estimate.
+
+        :param dims: x, z and hidden dimensions of the networks
+        """
         [x_dim, z_dim, h_dim] = dims
         super(LadderVariationalAutoencoder, self).__init__([x_dim, z_dim[0], h_dim])
 
         neurons = [x_dim, *h_dim]
         encoder_layers = [LadderEncoder([neurons[i - 1], neurons[i], z_dim[i - 1]]) for i in range(1, len(neurons))]
-        decoder_layers = [LadderDecoder([z_dim[i], h_dim[i - 1], z_dim[i - 1]]) for i in range(1, len(h_dim))][::-1]
+        decoder_layers = [LadderDecoder([z_dim[i - 1], h_dim[i - 1], z_dim[i]]) for i in range(1, len(h_dim))][::-1]
 
         self.encoder = nn.ModuleList(encoder_layers)
         self.decoder = nn.ModuleList(decoder_layers)
