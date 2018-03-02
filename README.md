@@ -2,6 +2,10 @@
 
 A PyTorch-based package containing useful models for modern deep semi-supervised learning and deep generative models. Want to jump right into it? Look into the [notebooks](examples/notebooks).
 
+### Latest additions
+
+*2018.02.28* - The β-VAE notebook was added to show how VAEs can learn disentangled representations.
+
 ## What is semi-supervised learning?
 
 Semi-supervised learning tries to bridge the gap between supervised and unsupervised learning by learning from both
@@ -30,3 +34,4 @@ Kingma 2014.
 * [Semi-supervised Learning with Deep Generative Models (Kingma 2014)](https://arxiv.org/abs/1406.5298)
 * [Auxiliary Deep Generative Models (Maaløe 2016)](https://arxiv.org/abs/1602.05473)
 * [Ladder Variational Autoencoders (Sønderby 2016)](https://arxiv.org/abs/1602.02282)
+* [β-VAE (Higgins 2017)](https://openreview.net/forum?id=Sy2fzU9gl)
