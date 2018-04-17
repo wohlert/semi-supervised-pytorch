@@ -4,12 +4,33 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.nn import init
 
-from layers import GaussianSample, GaussianMerge
+from layers import GaussianSample, GaussianMerge, GumbelSoftmax
 from inference import log_gaussian, log_standard_gaussian
 
 
+class Perceptron(nn.Module):
+    def __init__(self, dims, activation_fn=F.relu, output_activation=None):
+        super(Perceptron, self).__init__()
+        self.dims = dims
+        self.activation_fn = activation_fn
+        self.output_activation = output_activation
+
+        self.layers = nn.ModuleList(list(map(lambda d: nn.Linear(*d), list(zip(dims, dims[1:])))))
+
+    def forward(self, x):
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+            if i == len(self.layers)-1 and self.output_activation is not None:
+                x = self.output_activation(x)
+            else:
+                x = self.activation_fn(x)
+
+        return x
+
+
+
 class Encoder(nn.Module):
-    def __init__(self, dims):
+    def __init__(self, dims, sample_layer=GaussianSample):
         """
         Inference network
 
@@ -29,7 +50,7 @@ class Encoder(nn.Module):
         linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
 
         self.hidden = nn.ModuleList(linear_layers)
-        self.sample = GaussianSample(h_dim[-1], z_dim)
+        self.sample = sample_layer(h_dim[-1], z_dim)
 
     def forward(self, x):
         for layer in self.hidden:
@@ -153,6 +174,46 @@ class VariationalAutoencoder(nn.Module):
         :param z: (torch.autograd.Variable) Random normal variable
         :return: (torch.autograd.Variable) generated sample
         """
+        return self.decoder(z)
+
+
+class GumbelAutoencoder(nn.Module):
+    def __init__(self, dims, n_samples=100):
+        super(GumbelAutoencoder, self).__init__()
+
+        [x_dim, z_dim, h_dim] = dims
+        self.z_dim = z_dim
+        self.n_samples = n_samples
+
+        self.encoder = Perceptron([x_dim, *h_dim])
+        self.sampler = GumbelSoftmax(h_dim[-1], z_dim, n_samples)
+        self.decoder = Perceptron([z_dim, *reversed(h_dim), x_dim], output_activation=F.sigmoid)
+
+        self.kl_divergence = 0
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_normal(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+
+    def _kld(self, qz):
+        k = Variable(torch.FloatTensor([self.z_dim]), requires_grad=False)
+        kl = qz * (torch.log(qz + 1e-8) - torch.log(1.0/k))
+        kl = kl.view(-1, self.n_samples, self.z_dim)
+        return torch.sum(torch.sum(kl, dim=1), dim=1)
+
+    def forward(self, x, y=None, tau=1):
+        x = self.encoder(x)
+
+        sample, qz = self.sampler(x, tau)
+        self.kl_divergence = self._kld(qz)
+
+        x_mu = self.decoder(sample)
+
+        return x_mu
+
+    def sample(self, z):
         return self.decoder(z)
 
 

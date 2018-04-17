@@ -4,6 +4,8 @@ A PyTorch-based package containing useful models for modern deep semi-supervised
 
 ### Latest additions
 
+*2018.04.17* - The Gumbel softmax notebook has been added to show how
+you can use discrete latent variables in VAEs.
 *2018.02.28* - The β-VAE notebook was added to show how VAEs can learn disentangled representations.
 
 ## What is semi-supervised learning?

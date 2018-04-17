@@ -72,3 +72,40 @@ class GaussianMerge(GaussianSample):
         log_var = torch.log(var + 1e-8)
 
         return self.reparametrize(mu, log_var), mu, log_var
+
+
+class GumbelSoftmax(Stochastic):
+    """
+    Layer that represents a sample from a categorical
+    distribution. Enables sampling and stochastic
+    backpropagation using the Gumbel-Softmax trick.
+    """
+    def __init__(self, in_features, out_features, n_distributions):
+        super(GumbelSoftmax, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.n_distributions = n_distributions
+
+        self.logits = nn.Linear(in_features, n_distributions*out_features)
+
+    def forward(self, x, tau=1.0):
+        logits = self.logits(x).view(-1, self.n_distributions)
+
+        # variational distribution over categories
+        softmax = F.softmax(logits, dim=-1) #q_y
+        sample = self.reparametrize(logits, tau).view(-1, self.n_distributions, self.out_features)
+        sample = torch.mean(sample, dim=1)
+
+        return sample, softmax
+
+    def reparametrize(self, logits, tau=1.0):
+        epsilon = Variable(torch.rand(logits.size()), requires_grad=False)
+
+        if logits.is_cuda:
+            epsilon = epsilon.cuda()
+
+        # Gumbel distributed noise
+        gumbel = -torch.log(-torch.log(epsilon+1e-8)+1e-8)
+        # Softmax as a continuous approximation of argmax
+        y = F.softmax((logits + gumbel)/tau, dim=1)
+        return y
